@@ -39,12 +39,9 @@ async def quest_create(cog: "QuestCommandsCog", interaction: discord.Interaction
         await interaction.response.send_message(str(exc), ephemeral=True)
         return
 
-    if not user.is_referee and not is_allowed_staff(cog.bot, member):
-        await interaction.response.send_message(
-            "You need the REFEREE role or an allowed staff role to create quests.",
-            ephemeral=True,
-        )
-        return
+    # Open quest creation to any guild user. Previously creation required the
+    # REFEREE role or allowed staff; that gate has been removed so anyone may
+    # start a quest creation session.
 
     if member.id in cog._active_quest_sessions:
         await interaction.response.send_message(
@@ -183,11 +180,10 @@ async def quest_announce(
                 ephemeral=True,
             )
             return
-        if parsed_time <= datetime.now(timezone.utc):
-            await interaction.followup.send(
-                "Scheduled time must be in the future.", ephemeral=True
-            )
-            return
+        # Allow any provided epoch timestamp (past or future). Previously we
+        # enforced that scheduled announce times must be in the future; that
+        # restriction has been removed to allow legacy scheduling or manual
+        # backdated announcements.
         existing.announce_at = parsed_time
         existing.status = QuestStatus.DRAFT
         cog._persist_quest(interaction.guild.id, existing)

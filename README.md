@@ -30,6 +30,8 @@ Nonagon is a multi-guild Discord automation platform that streamlines quest sche
 | `DB_NAME` | Yes | Logical database name for the API service (e.g., `nonagon`). |
 | `BOT_TOKEN` | Yes | Discord bot token for authenticating the gateway connection. |
 
+| `AUTO_LOAD_COGS` | No | When truthy (1/true/yes/on) the bot will auto-load the default set of cogs on startup. Defaults to `0`. |
+
 ### Running the Application
 
 ```bash
@@ -37,6 +39,13 @@ docker compose up --build -d
 ```
 
 This builds the images, starts the API on port `8000`, and launches the Discord bot.
+
+To enable the bot to auto-load all cogs from the manifest during startup (useful for development):
+
+```bash
+export AUTO_LOAD_COGS=1
+docker compose up --build -d
+```
 
 After inviting the bot to a guild, an administrator should run `/setup` once to create the default Quest Manager role, sign-up channel, and log channel. Use `/setup_status` to review the configuration or `/setup_reset` to clear stored settings if you need to start over.
 

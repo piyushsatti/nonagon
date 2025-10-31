@@ -698,12 +698,6 @@ class QuestScheduleModal(discord.ui.Modal):
             return
         seconds = int(value)
         scheduled = datetime.fromtimestamp(seconds, tz=timezone.utc)
-        if scheduled <= datetime.now(timezone.utc):
-            await self.session._flash_message(
-                interaction,
-                "Scheduled time must be in the future.",
-            )
-            return
         self.quest.announce_at = scheduled
         self.quest.status = QuestStatus.DRAFT
         self.cog._persist_quest(self.guild.id, self.quest)

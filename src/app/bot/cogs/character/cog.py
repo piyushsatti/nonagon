@@ -1174,7 +1174,7 @@ class CharacterWizardView(
 
 
 class _CharacterFieldModal(
-    ContextAwareModal[CharacterDraft, CharacterCreationResult]
+    ContextAwareModal
 ):
     def __init__(
         self,
@@ -1296,7 +1296,7 @@ class CharacterOptionalModal(_CharacterFieldModal):
 
 
 class CharacterTagsModal(
-    ContextAwareModal[CharacterDraft, CharacterCreationResult]
+    ContextAwareModal
 ):
     def __init__(self, context: CharacterWizardContext, view: CharacterWizardView) -> None:
         super().__init__(context, view, title="Character Tags")

@@ -27,10 +27,10 @@ def create_quest(
 
     if not users_repo.exists(referee_id):
         raise ValueError(f"Referee ID does not exist: {referee_id}")
-    else:
-        referee = users_repo.get(referee_id)
-        if not referee.is_referee:
-            raise ValueError(f"User is not a referee: {referee_id}")
+    # NOTE: Previously we enforced that the referee user had the REFEREE role
+    # (referee.is_referee). Creation is now open to any existing user, so we no
+    # longer require that flag here. The caller (bot/UI) may still choose to
+    # promote the user or assign a different referee if desired.
 
     quest = Quest(
         quest_id=quest_repo.next_id(),

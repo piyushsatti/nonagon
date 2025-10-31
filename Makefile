@@ -44,3 +44,9 @@ restart: ## Restart stack without triggering a rebuild
 
 logs: ## Tail compose service logs
 	$(DOCKER_COMPOSE) logs -f --tail=200
+
+start:
+	$(DOCKER_COMPOSE) build
+	$(DOCKER_COMPOSE) down
+	$(DOCKER_COMPOSE) up -d
+	$(DOCKER_COMPOSE) logs -f --tail=200

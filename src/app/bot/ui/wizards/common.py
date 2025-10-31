@@ -170,7 +170,7 @@ class PreviewWizardView(discord.ui.View, Generic[TModel, TResult]):
             item.disabled = value
 
 
-class ContextAwareModal(discord.ui.Modal):
+class ContextAwareModal(discord.ui.Modal, Generic[TModel, TResult]):
     def __init__(
         self,
         context: PreviewWizardContext[TModel, TResult],

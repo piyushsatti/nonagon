@@ -26,6 +26,8 @@
 - Try a simple flow to touch DB + logic:
   - Create something minimal (e.g., `/quest_create` with valid inputs).
   - Verify via `/quest_list` that it persists.
+
+Note: by default the bot only auto-loads a small set of admin cogs. To auto-load all default cogs on startup (handy for smoke tests), set `AUTO_LOAD_COGS=1` in your environment or `.env` before starting the bot.
 - Listener sanity (optional): send a normal message in a channel the bot can access and watch logs for GuildListenersCog events.
 
 ## Fast Dev Loop

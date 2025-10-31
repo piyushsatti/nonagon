@@ -25,8 +25,8 @@ It is designed with **explicit command endpoints** for state changes, mirroring 
 {
   "type": "https://api.nonagon.dev/errors/validation",
   "title": "Validation failed",
-  "detail": "Starting time must be in the future",
-  "fields": {"starting_at": "must be future"}
+  "detail": "Validation failed",
+  "fields": {"starting_at": "invalid format or value"}
 }
 ```
 
@@ -238,7 +238,7 @@ All Users endpoints require a path parameter `guild_id` and operate only on reco
 
 ## Validation Highlights
 
-* **QuestIn**: `starting_at` must be in the future; `duration_min` ≥ 15 (recommend ≥ 60).
+* **QuestIn**: `starting_at` may be past or future (RFC3339 UTC); `duration_min` ≥ 15 (recommend ≥ 60).
 * **SummaryIn**: Requires non-empty `title`, `description`, `raw`; at least one `player` and one `character`.
 * **CharacterIn**: Requires `owner_id` and valid links.
 * **User**: Must respect role/profile consistency; operations are scoped to the provided `guild_id`.

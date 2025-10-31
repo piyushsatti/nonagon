@@ -167,6 +167,7 @@ All four intents must be requested in `discord.Intents` during bot startup. The 
 
 * **Packaging:** `src/` layout; every package has `__init__.py`.
 * **Configuration:** env vars (e.g., `MONGODB_URI`, `BOT_TOKEN`, `LOG_LEVEL`). Commit only `.env.example`.
+* **Auto-load cogs:** control whether the bot auto-loads the full default cog manifest at startup with `AUTO_LOAD_COGS` (truthy values: `1`, `true`, `yes`, `on`). The `.env.example` includes this flag.
 * **Container:** Dockerfile at repo root; `.dockerignore` excludes venv, tests, docs, git.
 * **CI:** GitHub Actions runs `ruff`/`pytest` and optional image build.
 

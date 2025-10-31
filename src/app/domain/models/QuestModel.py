@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field, fields, replace
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Dict, List
+from typing import Any, Dict, List
 
 from app.domain.models.EntityIDModel import CharacterID, QuestID, SummaryID, UserID
 
@@ -117,15 +117,14 @@ class Quest:
                 or self.announce_at.tzinfo.utcoffset(self.announce_at) is None
             ):
                 self.announce_at = self.announce_at.replace(tzinfo=timezone.utc)
-
-        now_utc = datetime.now(timezone.utc)
-
         if self.starting_at and self.duration:
             if self.duration < timedelta(minutes=60):
                 raise ValueError("Duration must be at least 60 minutes.")
 
-        if self.starting_at and self.starting_at < now_utc:
-            raise ValueError("Starting time must be in the future.")
+        # Historically we enforced that starting_at must be in the future.
+        # Relax that restriction so callers can supply past or future times for
+        # backfilled or legacy scheduling. Validations that depend on time
+        # ordering should be performed by callers where appropriate.
 
         if self.duration and self.duration < timedelta(minutes=15):
             raise ValueError("Duration must be at least 15 minutes.")
@@ -136,12 +135,12 @@ class Quest:
         ):
             raise ValueError("Image URL must start with http:// or https://")
 
-    def from_dict(self, data: Dict[str, any]) -> Quest:
-        valid = {f.name for f in fields(self.__dict__)}
+    def from_dict(self, data: Dict[str, Any]) -> Quest:
+        valid = {f.name for f in fields(self)}
         filtered = {k: v for k, v in data.items() if k in valid}
         return replace(self, **filtered)
 
-    def to_dict(self) -> Dict[str, any]:
+    def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
 

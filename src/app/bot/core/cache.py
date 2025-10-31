@@ -136,6 +136,13 @@ async def auto_persist_loop(bot: commands.Bot) -> None:
                 "last_duration_ms": 0.0,
                 "errors": 0,
             }
+        else:
+            # Guard against an empty dict (e.g., runtime initialized it) by
+            # ensuring the expected counters exist.
+            flush_stats.setdefault("total_batches", 0)
+            flush_stats.setdefault("total_items", 0)
+            flush_stats.setdefault("last_duration_ms", 0.0)
+            flush_stats.setdefault("errors", 0)
 
         flush_stats["total_batches"] += 1
         flush_stats["total_items"] += batch_size
