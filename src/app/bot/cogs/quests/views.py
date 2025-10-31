@@ -333,6 +333,126 @@ class CharacterSelect(discord.ui.Select):
         await interaction.response.send_message(message, ephemeral=True)
 
 
+class EndQuestConfirmView(discord.ui.View):
+    """DM view to confirm ending a quest via a modal."""
+
+    def __init__(
+        self,
+        service: "QuestCommandsCog",
+        *,
+        guild_id: int,
+        quest_id: str,
+        preview: Optional[str] = None,
+        timeout: Optional[float] = 300.0,
+    ) -> None:
+        super().__init__(timeout=timeout)
+        self.service = service
+        self.guild_id = guild_id
+        self.quest_id = quest_id
+        self.preview = preview
+
+    @discord.ui.button(
+        label="Confirm end quest",
+        style=discord.ButtonStyle.danger,
+        custom_id="endquest:confirm",
+    )
+    async def confirm_button(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ) -> None:
+        modal = ConfirmEndQuestModal(
+            self.service, guild_id=self.guild_id, quest_id=self.quest_id
+        )
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(
+        label="Cancel",
+        style=discord.ButtonStyle.secondary,
+        custom_id="endquest:cancel",
+    )
+    async def cancel_button(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ) -> None:
+        await interaction.response.send_message(
+            "End-quest request cancelled.", ephemeral=True
+        )
+        self.stop()
+
+
+class ConfirmEndQuestModal(discord.ui.Modal):
+    """Modal asking the referee to type the Quest ID to confirm."""
+
+    def __init__(self, service: "QuestCommandsCog", *, guild_id: int, quest_id: str) -> None:
+        super().__init__(title="Confirm ending quest")
+        self.service = service
+        self.guild_id = guild_id
+        self.quest_id = quest_id
+
+        self.confirm_input = discord.ui.TextInput(
+            label="Type the Quest ID to confirm",
+            placeholder="e.g. QUESA1B2C3",
+            max_length=64,
+            required=True,
+        )
+        self.add_item(self.confirm_input)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        typed = (self.confirm_input.value or "").strip().upper()
+        try:
+            expected = str(QuestID.parse(self.quest_id)).upper()
+        except Exception:
+            await interaction.followup.send(
+                "Invalid quest identifier on confirmation. Quest not ended.",
+                ephemeral=True,
+            )
+            return
+
+        if typed != expected:
+            await interaction.followup.send(
+                "Confirmation did not match the Quest ID. Quest not ended.",
+                ephemeral=True,
+            )
+            return
+
+        guild = self.service.bot.get_guild(self.guild_id)
+        if guild is None:
+            await interaction.followup.send(
+                "I couldn't resolve the server for this quest. Please try again.",
+                ephemeral=True,
+            )
+            return
+
+        # Resolve the member in the guild from the DM user
+        member = guild.get_member(int(interaction.user.id))
+        if member is None:
+            try:
+                member = await guild.fetch_member(int(interaction.user.id))
+            except Exception:
+                member = None
+
+        if member is None:
+            await interaction.followup.send(
+                "I couldn't verify your membership in the server. Quest not ended.",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            quest_id_obj = QuestID.parse(self.quest_id)
+            message = await self.service.execute_end(guild, member, quest_id_obj)
+        except ValueError as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+            return
+        except Exception as exc:
+            await interaction.followup.send(
+                f"Failed to mark quest as completed: {exc}", ephemeral=True
+            )
+            return
+
+        await interaction.followup.send(message, ephemeral=True)
+
+
 class SignupDecisionView(discord.ui.View):
     def __init__(
         self,
