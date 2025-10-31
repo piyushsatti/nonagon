@@ -677,6 +677,78 @@ class CharacterSessionBase(WizardSessionBase):
         self.cog = cog
         self.data: Dict[str, Optional[str]] = {}
 
+    async def _create_character_thread(
+        self,
+        channel: discord.TextChannel,
+        announcement: discord.Message,
+        thread_name: str,
+    ) -> Optional[discord.Thread]:
+        try:
+            thread = await channel.create_thread(
+                name=thread_name,
+                type=discord.ChannelType.private_thread,
+                auto_archive_duration=channel.default_auto_archive_duration or 1440,
+                reason="Character onboarding",
+            )
+        except (discord.Forbidden, discord.HTTPException):
+            return None
+
+        try:
+            await thread.add_user(self.member)
+        except discord.HTTPException:
+            pass
+
+        try:
+            await thread.send(
+                f"Onboarding thread for {self.member.mention}. "
+                f"Announcement: {announcement.jump_url}"
+            )
+        except discord.HTTPException:
+            pass
+
+        return thread
+
+    def _resolve_character_channel(self) -> tuple[Optional[discord.TextChannel], str]:
+        settings = guild_settings_store.fetch_settings(self.guild.id) or {}
+        channel_id = settings.get("character_commands_channel_id")
+        if channel_id is None:
+            return (
+                None,
+                "No character commands channel is configured. Ask an admin to run `/setup character` and try again.",
+            )
+
+        try:
+            candidate = self.guild.get_channel(int(channel_id))
+        except (TypeError, ValueError):
+            candidate = None
+
+        if not isinstance(candidate, discord.TextChannel):
+            return (
+                None,
+                "The configured character channel is missing or not a text channel. Ask an admin to rerun `/setup character`.",
+            )
+
+        me = self.guild.me
+        if me is None:
+            return (
+                None,
+                "I couldn't resolve my bot member in this guild. Try again once I'm fully connected.",
+            )
+
+        perms = candidate.permissions_for(me)
+        if not perms.send_messages:
+            return (
+                None,
+                f"I need permission to send messages in {candidate.mention}. Update my permissions and try again.",
+            )
+        if not (perms.create_private_threads or perms.manage_threads):
+            return (
+                None,
+                f"I need **Create Private Threads** permission in {candidate.mention} to start onboarding threads.",
+            )
+
+        return candidate, ""
+
     async def _safe_send(
         self,
         content: Optional[str] = None,
@@ -963,6 +1035,131 @@ class CharacterCreationSession(CharacterSessionBase):
                 False,
                 error="An unexpected error occurred while creating your character. Please try again later.",
             )
+
+    async def _persist_character(self) -> CharacterCreationResult:
+        channel, channel_error = self._resolve_character_channel()
+        if channel is None:
+            await self._safe_send(channel_error)
+            return CharacterCreationResult(False, error=channel_error)
+
+        try:
+            user = await self.cog._get_cached_user(self.member)
+        except RuntimeError as exc:
+            logger.exception("Failed to resolve user during character create: %s", exc)
+            await self._safe_send(
+                "Internal error resolving your profile; please try again later."
+            )
+            return CharacterCreationResult(
+                False,
+                error="Internal error resolving your profile; please try again later.",
+            )
+
+        if not user.is_player:
+            user.enable_player()
+
+        char_id = await self.cog._next_character_id(self.guild)
+        description = self._normalize_optional(self.draft.description)
+        notes = self._normalize_optional(self.draft.notes)
+        tags = list(self.draft.tags)
+        character = Character(
+            character_id=str(char_id),
+            owner_id=user.user_id,
+            name=self.draft.name or "",
+            ddb_link=self.draft.ddb_link or "",
+            character_thread_link=self.draft.character_thread_link or "",
+            token_link=self.draft.token_link or "",
+            art_link=self.draft.art_link or "",
+            description=description,
+            notes=notes,
+            tags=tags,
+            created_at=datetime.now(timezone.utc),
+            guild_id=self.guild.id,
+            status=CharacterRole.ACTIVE,
+        )
+
+        try:
+            character.validate_character()
+        except ValueError as exc:
+            await self._safe_send(f"Character validation failed: {exc}")
+            return CharacterCreationResult(
+                False, error=f"Character validation failed: {exc}"
+            )
+
+        if user.player is None:
+            user.enable_player()
+        if user.player is not None and char_id not in user.player.characters:
+            user.player.characters.append(CharacterID.parse(str(char_id)))
+
+        public_embed = self.cog._build_character_embed_from_model(character)
+        try:
+            announcement = await channel.send(
+                content=f"{self.member.mention} created a new character!",
+                embed=public_embed,
+            )
+        except discord.Forbidden:
+            error = (
+                f"I don't have permission to post in {channel.mention}. "
+                "Ask an admin to fix my channel permissions and try again."
+            )
+            await self._safe_send(error)
+            return CharacterCreationResult(False, error=error)
+        except discord.HTTPException as exc:
+            error = f"Failed to post in {channel.mention}: {exc}"
+            await self._safe_send(error)
+            return CharacterCreationResult(False, error=error)
+
+        await logger.audit(
+            self.cog.bot,
+            self.guild,
+            "%s created character `%s` (%s)",
+            self.member.mention,
+            character.name,
+            str(char_id),
+        )
+
+        thread = None
+        thread_note = None
+        thread_name = f"Character: {character.name}"[:90]
+        thread_parent = announcement.channel
+        if isinstance(thread_parent, discord.TextChannel):
+            thread = await self._create_character_thread(
+                thread_parent, announcement, thread_name
+            )
+            if thread is None:
+                thread_note = (
+                    "I couldn't create a private onboarding thread. Grant me the **Create Private Threads** permission or allow thread creation in the configured channel."
+                )
+        else:
+            thread_note = "Character announcements are posted in a channel that does not support threads."
+
+        if isinstance(announcement.channel, discord.TextChannel):
+            character.announcement_channel_id = announcement.channel.id
+        character.announcement_message_id = announcement.id
+        if thread is not None:
+            character.onboarding_thread_id = thread.id
+
+        self.cog._persist_character(self.guild.id, character)
+        await self.cog.bot.dirty_data.put((self.guild.id, self.member.id))
+
+        summary_lines = [
+            f"Character `{character.name}` (`{char_id}`) created!",
+            f"Announcement: {announcement.jump_url}",
+        ]
+        if thread is not None:
+            thread_link = f"https://discord.com/channels/{self.guild.id}/{thread.id}"
+            summary_lines.append(f"Onboarding thread: {thread_link}")
+        if thread_note:
+            summary_lines.append(thread_note)
+
+        await self._safe_send("\n".join(summary_lines))
+
+        return CharacterCreationResult(
+            True,
+            character_name=character.name,
+            announcement_channel=announcement.channel
+            if isinstance(announcement.channel, discord.TextChannel)
+            else None,
+        )
 
 
 class CharacterWizardContext(
@@ -1329,131 +1526,6 @@ class CharacterTagsModal(
             view=self.view,
         )
 
-    async def _persist_character(self) -> CharacterCreationResult:
-        channel, channel_error = self._resolve_character_channel()
-        if channel is None:
-            await self._safe_send(channel_error)
-            return CharacterCreationResult(False, error=channel_error)
-
-        try:
-            user = await self.cog._get_cached_user(self.member)
-        except RuntimeError as exc:
-            logger.exception("Failed to resolve user during character create: %s", exc)
-            await self._safe_send(
-                "Internal error resolving your profile; please try again later."
-            )
-            return CharacterCreationResult(
-                False,
-                error="Internal error resolving your profile; please try again later.",
-            )
-
-        if not user.is_player:
-            user.enable_player()
-
-        char_id = await self.cog._next_character_id(self.guild)
-        description = self._normalize_optional(self.draft.description)
-        notes = self._normalize_optional(self.draft.notes)
-        tags = list(self.draft.tags)
-        character = Character(
-            character_id=str(char_id),
-            owner_id=user.user_id,
-            name=self.draft.name or "",
-            ddb_link=self.draft.ddb_link or "",
-            character_thread_link=self.draft.character_thread_link or "",
-            token_link=self.draft.token_link or "",
-            art_link=self.draft.art_link or "",
-            description=description,
-            notes=notes,
-            tags=tags,
-            created_at=datetime.now(timezone.utc),
-            guild_id=self.guild.id,
-            status=CharacterRole.ACTIVE,
-        )
-
-        try:
-            character.validate_character()
-        except ValueError as exc:
-            await self._safe_send(f"Character validation failed: {exc}")
-            return CharacterCreationResult(
-                False, error=f"Character validation failed: {exc}"
-            )
-
-        if user.player is None:
-            user.enable_player()
-        if user.player is not None and char_id not in user.player.characters:
-            user.player.characters.append(CharacterID.parse(str(char_id)))
-
-        public_embed = self.cog._build_character_embed_from_model(character)
-        try:
-            announcement = await channel.send(
-                content=f"{self.member.mention} created a new character!",
-                embed=public_embed,
-            )
-        except discord.Forbidden:
-            error = (
-                f"I don't have permission to post in {channel.mention}. "
-                "Ask an admin to fix my channel permissions and try again."
-            )
-            await self._safe_send(error)
-            return CharacterCreationResult(False, error=error)
-        except discord.HTTPException as exc:
-            error = f"Failed to post in {channel.mention}: {exc}"
-            await self._safe_send(error)
-            return CharacterCreationResult(False, error=error)
-
-        await logger.audit(
-            self.cog.bot,
-            self.guild,
-            "%s created character `%s` (%s)",
-            self.member.mention,
-            character.name,
-            str(char_id),
-        )
-
-        thread = None
-        thread_note = None
-        thread_name = f"Character: {character.name}"[:90]
-        thread_parent = announcement.channel
-        if isinstance(thread_parent, discord.TextChannel):
-            thread = await self._create_character_thread(
-                thread_parent, announcement, thread_name
-            )
-            if thread is None:
-                thread_note = (
-                    "I couldn't create a private onboarding thread. Grant me the **Create Private Threads** permission or allow thread creation in the configured channel."
-                )
-        else:
-            thread_note = "Character announcements are posted in a channel that does not support threads."
-
-        if isinstance(announcement.channel, discord.TextChannel):
-            character.announcement_channel_id = announcement.channel.id
-        character.announcement_message_id = announcement.id
-        if thread is not None:
-            character.onboarding_thread_id = thread.id
-
-        self.cog._persist_character(self.guild.id, character)
-        await self.cog.bot.dirty_data.put((self.guild.id, self.member.id))
-
-        summary_lines = [
-            f"Character `{character.name}` (`{char_id}`) created!",
-            f"Announcement: {announcement.jump_url}",
-        ]
-        if thread is not None:
-            thread_link = f"https://discord.com/channels/{self.guild.id}/{thread.id}"
-            summary_lines.append(f"Onboarding thread: {thread_link}")
-        if thread_note:
-            summary_lines.append(thread_note)
-
-        await self._safe_send("\n".join(summary_lines))
-
-        return CharacterCreationResult(
-            True,
-            character_name=character.name,
-            announcement_channel=announcement.channel
-            if isinstance(announcement.channel, discord.TextChannel)
-            else None,
-        )
-
 
 class CharacterUpdateSession(CharacterSessionBase):
     def __init__(
@@ -1661,80 +1733,6 @@ class CharacterUpdateSession(CharacterSessionBase):
             character=character,
             note=note,
         )
-
-    async def _create_character_thread(
-        self,
-        channel: discord.TextChannel,
-        announcement: discord.Message,
-        thread_name: str,
-    ) -> Optional[discord.Thread]:
-        try:
-            thread = await channel.create_thread(
-                name=thread_name,
-                type=discord.ChannelType.private_thread,
-                auto_archive_duration=channel.default_auto_archive_duration or 1440,
-                reason="Character onboarding",
-            )
-        except (discord.Forbidden, discord.HTTPException):
-            return None
-
-        try:
-            await thread.add_user(self.member)
-        except discord.HTTPException:
-            pass
-
-        try:
-            await thread.send(
-                f"Onboarding thread for {self.member.mention}. "
-                f"Announcement: {announcement.jump_url}"
-            )
-        except discord.HTTPException:
-            pass
-
-        return thread
-
-    def _resolve_character_channel(
-        self,
-    ) -> tuple[Optional[discord.TextChannel], str]:
-        settings = guild_settings_store.fetch_settings(self.guild.id) or {}
-        channel_id = settings.get("character_commands_channel_id")
-        if channel_id is None:
-            return (
-                None,
-                "No character commands channel is configured. Ask an admin to run `/setup character` and try again.",
-            )
-
-        try:
-            candidate = self.guild.get_channel(int(channel_id))
-        except (TypeError, ValueError):
-            candidate = None
-
-        if not isinstance(candidate, discord.TextChannel):
-            return (
-                None,
-                "The configured character channel is missing or not a text channel. Ask an admin to rerun `/setup character`.",
-            )
-
-        me = self.guild.me
-        if me is None:
-            return (
-                None,
-                "I couldn't resolve my bot member in this guild. Try again once I'm fully connected.",
-            )
-
-        perms = candidate.permissions_for(me)
-        if not perms.send_messages:
-            return (
-                None,
-                f"I need permission to send messages in {candidate.mention}. Update my permissions and try again.",
-            )
-        if not (perms.create_private_threads or perms.manage_threads):
-            return (
-                None,
-                f"I need **Create Private Threads** permission in {candidate.mention} to start onboarding threads.",
-            )
-
-        return candidate, ""
 
     async def _ask(
         self,

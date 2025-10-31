@@ -76,7 +76,8 @@ This page documents the bot’s slash commands, their inputs, permission require
 - `endquest`
   - Inputs: `quest_id: str` (e.g., `QUESH3X1T7`)
   - Permissions: must run in a guild; only the quest referee may end
-  - Output: ephemeral confirmation; channel notice encouraging summaries
+  - Flow: sends a DM to the referee containing a “Confirm end quest” button which opens a modal. The referee must type the Quest ID to confirm. On submission, the quest is marked as completed.
+  - Output: DM confirmation; channel notice encouraging summaries; the slash command replies ephemerally that a DM was sent for confirmation
   - Logging: info log; demo log
 
 ## Summaries

@@ -152,6 +152,15 @@ class SetupCommandsCog(commands.Cog):
             ),
             inline=False,
         )
+        embed.add_field(
+            name="Referee role",
+            value=self._format_role(
+                guild,
+                self._coerce_int(settings.get("referee_role_id")),
+                settings.get("referee_role_name"),
+            ),
+            inline=False,
+        )
 
         embed.add_field(
             name="Summary channel",
@@ -177,6 +186,16 @@ class SetupCommandsCog(commands.Cog):
                 guild,
                 self._coerce_int(settings.get("log_channel_id")),
                 settings.get("log_channel_name"),
+            ),
+            inline=False,
+        )
+
+        embed.add_field(
+            name="Player role",
+            value=self._format_role(
+                guild,
+                self._coerce_int(settings.get("player_role_id")),
+                settings.get("player_role_name"),
             ),
             inline=False,
         )
@@ -208,8 +227,26 @@ class SetupCommandsCog(commands.Cog):
         else:
             embed.add_field(name="Booster tracking", value="Disabled", inline=False)
 
+        # Staff roles (by id) — modern field
+        allowed_ids_raw = settings.get("allowed_role_ids") or []
+        try:
+            allowed_ids = [int(x) for x in allowed_ids_raw]
+        except Exception:
+            allowed_ids = []
+        if allowed_ids:
+            mentions: list[str] = []
+            for rid in allowed_ids:
+                role = guild.get_role(rid)
+                mentions.append(role.mention if isinstance(role, discord.Role) else f"@{rid}")
+            embed.add_field(
+                name="Staff override roles",
+                value=", ".join(mentions),
+                inline=False,
+            )
+
+        # Legacy: names array retained for backwards compatibility in status
         allowed_names = settings.get("allowed_role_names") or []
-        if allowed_names:
+        if allowed_names and not allowed_ids:
             embed.add_field(
                 name="Allowed roles (legacy)",
                 value=", ".join(f"`{name}`" for name in allowed_names),
@@ -235,7 +272,7 @@ class SetupCommandsCog(commands.Cog):
         )
         embed.add_field(
             name="/setup quest",
-            value="Set quest announcement channel and optional ping role.",
+            value="Set quest announcement channel, optional ping role, and referee role.",
             inline=False,
         )
         embed.add_field(
@@ -246,6 +283,11 @@ class SetupCommandsCog(commands.Cog):
         embed.add_field(
             name="/setup character",
             value="Select the channel for character announcements (requires thread perms).",
+            inline=False,
+        )
+        embed.add_field(
+            name="/setup player",
+            value="Set the Discord role to mirror to the domain PLAYER role (optional).",
             inline=False,
         )
         embed.add_field(
@@ -261,6 +303,11 @@ class SetupCommandsCog(commands.Cog):
         embed.add_field(
             name="/setup boosters",
             value="Toggle booster tracking and set the role used to identify boosters.",
+            inline=False,
+        )
+        embed.add_field(
+            name="/setup staff",
+            value="Configure which Discord roles are treated as Nonagon staff for overrides.",
             inline=False,
         )
         embed.add_field(
@@ -408,11 +455,12 @@ class SetupCommandsCog(commands.Cog):
 
     @setup.command(
         name="quest",
-        description="Configure quest announcement channel and optional ping role.",
+        description="Configure quest announcement channel, optional ping role, and referee role.",
     )
     @app_commands.describe(
         announcement_channel="Channel where quest announcements are posted.",
         pings="Role to mention when announcing quests (optional).",
+        referees="Role that marks users as referees (optional).",
     )
     @app_commands.guild_only()
     @app_commands.checks.has_permissions(manage_guild=True)
@@ -421,6 +469,7 @@ class SetupCommandsCog(commands.Cog):
         interaction: discord.Interaction,
         announcement_channel: discord.TextChannel,
         pings: Optional[discord.Role] = None,
+        referees: Optional[discord.Role] = None,
     ) -> None:
         if interaction.guild is None:
             await interaction.response.send_message(
@@ -443,6 +492,8 @@ class SetupCommandsCog(commands.Cog):
                 "quest_commands_channel_name": announcement_channel.name,
                 "quest_ping_role_id": pings.id if pings else None,
                 "quest_ping_role_name": pings.name if pings else None,
+                "referee_role_id": referees.id if referees else None,
+                "referee_role_name": referees.name if referees else None,
             },
         )
 
@@ -459,6 +510,11 @@ class SetupCommandsCog(commands.Cog):
         embed.add_field(
             name="Ping role",
             value=pings.mention if pings else "None",
+            inline=False,
+        )
+        embed.add_field(
+            name="Referee role",
+            value=referees.mention if referees else "None",
             inline=False,
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
@@ -723,6 +779,102 @@ class SetupCommandsCog(commands.Cog):
             description=(
                 f"Booster tracking enabled. Using role: {role.mention if role else 'None'}."
             ),
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @setup.command(
+        name="player",
+        description="Configure the Discord role mirrored to the domain PLAYER role.",
+    )
+    @app_commands.describe(role="Role that marks players (optional; omit to clear).")
+    @app_commands.guild_only()
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def setup_player(
+        self,
+        interaction: discord.Interaction,
+        role: Optional[discord.Role] = None,
+    ) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "This command can only be used inside a guild.", ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        config = self._save_settings(
+            interaction.guild,
+            interaction.user.id,
+            {
+                "player_role_id": role.id if role else None,
+                "player_role_name": role.name if role else None,
+            },
+        )
+
+        embed = discord.Embed(
+            title="Player role updated",
+            colour=discord.Colour.blurple(),
+            timestamp=cast(Optional[datetime], config.get("updated_at")),
+        )
+        embed.add_field(
+            name="Player role",
+            value=role.mention if role else "None",
+            inline=False,
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @setup.command(
+        name="staff",
+        description="Configure Discord roles treated as Nonagon staff for overrides.",
+    )
+    @app_commands.describe(
+        role1="Staff role (optional)",
+        role2="Staff role (optional)",
+        role3="Staff role (optional)",
+        role4="Staff role (optional)",
+        role5="Staff role (optional)",
+    )
+    @app_commands.guild_only()
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def setup_staff(
+        self,
+        interaction: discord.Interaction,
+        role1: Optional[discord.Role] = None,
+        role2: Optional[discord.Role] = None,
+        role3: Optional[discord.Role] = None,
+        role4: Optional[discord.Role] = None,
+        role5: Optional[discord.Role] = None,
+    ) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "This command can only be used inside a guild.", ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        roles = [r for r in (role1, role2, role3, role4, role5) if r is not None]
+        ids = [r.id for r in roles]
+        names = [r.name for r in roles]
+
+        config = self._save_settings(
+            interaction.guild,
+            interaction.user.id,
+            {
+                "allowed_role_ids": ids,
+                "allowed_role_names": names,
+            },
+        )
+
+        embed = discord.Embed(
+            title="Staff roles updated",
+            colour=discord.Colour.blurple(),
+            timestamp=cast(Optional[datetime], config.get("updated_at")),
+        )
+        embed.add_field(
+            name="Staff roles",
+            value=", ".join(r.mention for r in roles) if roles else "None",
+            inline=False,
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
 

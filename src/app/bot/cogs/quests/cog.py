@@ -25,7 +25,7 @@ from app.infra.serialization import to_bson
 
 from . import service as quest_service
 from .embeds import build_nudge_embed, build_quest_embed
-from .views import QuestSignupView
+from .views import QuestSignupView, EndQuestConfirmView
 
 if TYPE_CHECKING:
     from .adapters import QuestCreationSession
@@ -1104,6 +1104,68 @@ class QuestCommandsCog(commands.Cog):
             return f"Quest bumped in {channel_display}. Next nudge available {relative_tag}."
         return f"Quest bumped. Next nudge available {relative_tag}."
 
+    async def _execute_end(
+        self,
+        guild: discord.Guild,
+        member: discord.Member,
+        quest_id: QuestID,
+    ) -> str:
+        quest = self._fetch_quest(guild.id, quest_id)
+        if quest is None:
+            raise ValueError("Quest not found.")
+
+        try:
+            referee_user_id = (
+                quest.referee_id
+                if isinstance(quest.referee_id, UserID)
+                else UserID.parse(str(quest.referee_id))
+            )
+        except Exception:
+            referee_user_id = None
+
+        invoker_user_id = UserID.from_body(str(member.id))
+
+        if referee_user_id != invoker_user_id:
+            raise ValueError("Only the quest referee can end the quest.")
+
+        quest.set_completed()
+        quest.ended_at = datetime.now(timezone.utc)
+
+        self._persist_quest(guild.id, quest)
+
+        await self._sync_quest_announcement(
+            guild,
+            quest,
+            last_updated_at=quest.ended_at,
+            view=None,
+        )
+        logger.info(
+            "Quest %s ended by %s in guild %s",
+            quest_id,
+            member.id,
+            guild.id,
+        )
+
+        await self._remove_signup_view(guild, quest)
+
+        channel = guild.get_channel(int(quest.channel_id))
+        if channel is not None:
+            await channel.send(
+                f"Quest `{quest.title or quest.quest_id}` has been marked as completed. Please submit your summaries!"
+            )
+
+        await logger.audit(
+            self.bot,
+            guild,
+            "Quest `%s` completed by %s",
+            quest.title or str(quest.quest_id),
+            member.mention,
+        )
+
+        await self._send_summary_reminders(guild, quest)
+
+        return f"Quest `{quest_id}` marked as completed."
+
     async def _execute_join(
         self,
         interaction: discord.Interaction,
@@ -1347,6 +1409,14 @@ class QuestCommandsCog(commands.Cog):
         quest_id: QuestID,
     ) -> str:
         return await self._execute_nudge(interaction, quest_id)
+
+    async def execute_end(
+        self,
+        guild: discord.Guild,
+        member: discord.Member,
+        quest_id: QuestID,
+    ) -> str:
+        return await self._execute_end(guild, member, quest_id)
 
     async def select_signup_via_api(
         self,
@@ -1706,45 +1776,29 @@ class QuestCommandsCog(commands.Cog):
             )
             return
 
-        quest.set_completed()
-        quest.ended_at = datetime.now(timezone.utc)
-
-        self._persist_quest(interaction.guild.id, quest)
-
-        await self._sync_quest_announcement(
-            interaction.guild,
-            quest,
-            last_updated_at=quest.ended_at,
-            view=None,
-        )
-        logger.info(
-            "Quest %s ended by %s in guild %s",
-            quest_id_obj,
-            member.id,
-            interaction.guild.id,
-        )
-
-        await self._remove_signup_view(interaction.guild, quest)
-
-        channel = interaction.guild.get_channel(int(quest.channel_id))
-        if channel is not None:
-            await channel.send(
-                f"Quest `{quest.title or quest.quest_id}` has been marked as completed. Please submit your summaries!"
+        # Send a DM asking for explicit confirmation via modal
+        try:
+            dm = await member.create_dm()
+            preview = f"Quest: {quest.title or quest.quest_id} ({quest_id_obj})"
+            await dm.send(
+                content=(
+                    "Confirm you want to end this quest. "
+                    "Submitting the confirmation will mark it as completed.\n" + preview
+                ),
+                view=EndQuestConfirmView(
+                    self, guild_id=interaction.guild.id, quest_id=str(quest_id_obj)
+                ),
             )
-
-        await logger.audit(
-            self.bot,
-            interaction.guild,
-            "Quest `%s` completed by %s",
-            quest.title or str(quest.quest_id),
-            member.mention,
-        )
-
-        await self._send_summary_reminders(interaction.guild, quest)
-
-        await interaction.followup.send(
-            f"Quest `{quest_id_obj}` marked as completed.", ephemeral=True
-        )
+            await interaction.followup.send(
+                "I sent you a DM to confirm ending the quest. Please complete the confirmation there.",
+                ephemeral=True,
+            )
+        except discord.Forbidden:
+            await interaction.followup.send(
+                "I couldn't DM you. Enable DMs from server members and run `/endquest` again.",
+                ephemeral=True,
+            )
+            return
 
 
 async def setup(bot: commands.Bot):
