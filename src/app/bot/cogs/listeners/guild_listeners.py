@@ -8,6 +8,7 @@ from discord.ext import commands
 
 from app.bot.cogs.listeners.member_cache import MemberCache
 from app.bot.utils.logging import get_logger
+from app.bot.services import guild_settings_store
 from app.bot.database import db_client
 from app.domain.models.UserModel import User
 
@@ -25,6 +26,37 @@ class GuildListenersCog(commands.Cog):
 
     async def _ensure_cached_user(self, member: Member) -> User:
         return await self._member_cache.ensure_cached_user(member)
+
+    async def _sync_referee_role(self, member: Member, user: User) -> bool:
+        """Ensure the domain user's referee flag matches the configured Discord role.
+
+        Returns True if the user was modified.
+        """
+        settings = guild_settings_store.fetch_settings(member.guild.id) or {}
+        raw_id = settings.get("referee_role_id")
+        try:
+            role_id = int(raw_id) if raw_id is not None else None
+        except (TypeError, ValueError):
+            role_id = None
+
+        if role_id is None:
+            return False
+
+        has_ref_role = any(r.id == role_id for r in member.roles)
+        changed = False
+
+        if has_ref_role and not user.is_referee:
+            user.enable_referee()
+            changed = True
+        elif not has_ref_role and user.is_referee:
+            user.disable_referee()
+            changed = True
+
+        if changed:
+            # Queue persistence via the bot's dirty-data pipeline
+            await self.bot.dirty_data.put((member.guild.id, member.id))
+
+        return changed
 
     async def _resolve_cached_user(
         self, guild: Guild, user_id: int
@@ -78,6 +110,24 @@ class GuildListenersCog(commands.Cog):
             member.joined_at,
             len(self.bot.guild_data[member.guild.id]["users"]),
         )
+        # Sync referee role on join if configured
+        try:
+            await self._sync_referee_role(member, user)
+        except Exception:
+            # Non-fatal; continue
+            pass
+
+    @commands.Cog.listener("on_member_update")
+    async def _on_member_update(self, before: Member, after: Member) -> None:
+        # Only act when role assignments change
+        if set(before.roles) == set(after.roles):
+            return
+        try:
+            user = await self._ensure_cached_user(after)
+            await self._sync_referee_role(after, user)
+        except Exception:
+            # Defensive: ignore failures
+            return
 
     @commands.Cog.listener("on_message")
     async def on_message(self, message: Message):
