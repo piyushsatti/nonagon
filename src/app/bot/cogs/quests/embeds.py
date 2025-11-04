@@ -55,6 +55,14 @@ def quest_to_embed_data(
         image_url=quest.image_url,
         last_updated_at=last_updated_at or datetime.now(timezone.utc),
         approved_by_display=approved_by_display,
+        dm_table_url=quest.dm_table_url,
+        tags=list(quest.tags or []),
+        lines_and_veils=quest.lines_and_veils,
+        thread_url=(
+            f"https://discord.com/channels/{quest.guild_id}/{quest.thread_id}"
+            if quest.guild_id and quest.thread_id
+            else None
+        ),
     )
     return data
 

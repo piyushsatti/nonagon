@@ -344,6 +344,37 @@ class QuestWizardView(discord.ui.View):
         except discord.NotFound:
             return
 
+    @discord.ui.button(label="DM Table Link", style=discord.ButtonStyle.secondary)
+    async def edit_dm_table_link(  # type: ignore[override]
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ) -> None:
+        try:
+            await interaction.response.send_modal(
+                QuestDMTableModal(self.context, self)
+            )
+        except discord.NotFound:
+            return
+
+    @discord.ui.button(label="Tags", style=discord.ButtonStyle.secondary)
+    async def edit_tags(  # type: ignore[override]
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ) -> None:
+        try:
+            await interaction.response.send_modal(QuestTagsModal(self.context, self))
+        except discord.NotFound:
+            return
+
+    @discord.ui.button(label="Lines & Veils", style=discord.ButtonStyle.secondary)
+    async def edit_lines_veils(  # type: ignore[override]
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ) -> None:
+        try:
+            await interaction.response.send_modal(
+                QuestLinesVeilsModal(self.context, self)
+            )
+        except discord.NotFound:
+            return
+
     @discord.ui.button(label="Image", style=discord.ButtonStyle.secondary)
     async def edit_image(  # type: ignore[override]
         self, interaction: discord.Interaction, button: discord.ui.Button
@@ -374,6 +405,10 @@ class QuestWizardView(discord.ui.View):
             missing.append("start time")
         if not self.context.quest.duration:
             missing.append("duration")
+        if not self.context.quest.dm_table_url:
+            missing.append("DM table link")
+        if not self.context.quest.tags:
+            missing.append("tags")
         if missing:
             await self.context.session._flash_message(
                 interaction,
@@ -483,7 +518,7 @@ class QuestStartModal(_BaseQuestModal):
             )
         self.start_input = discord.ui.TextInput(
             label="Start Time (epoch seconds)",
-            placeholder="Example: 1761424020",
+            placeholder="Example: 1761424020 — Need epoch? https://www.hammertime.cyou/",
             default=default_value,
             max_length=32,
         )
@@ -495,7 +530,7 @@ class QuestStartModal(_BaseQuestModal):
         if parsed is None:
             await self.context.session._flash_message(
                 interaction,
-                "Could not parse start time. Provide epoch seconds (UTC).",
+                "Could not parse start time. Provide epoch seconds (UTC). Need help? https://www.hammertime.cyou/",
             )
             return
         self.context.quest.starting_at = parsed
@@ -559,6 +594,101 @@ class QuestImageModal(_BaseQuestModal):
             )
             return
         self.context.quest.image_url = value or None
+        await interaction.response.defer()
+        await self.context.session._update_preview(
+            self.context.quest,
+            view=self.view,
+        )
+
+
+class QuestDMTableModal(_BaseQuestModal):
+    def __init__(self, context: QuestWizardContext, view: QuestWizardView) -> None:
+        super().__init__(context, view, title="DM Table Link")
+        self.link_input = discord.ui.TextInput(
+            label="Link to the DM's table",
+            placeholder="https://example.com/dm-table",
+            default=context.quest.dm_table_url or "",
+            max_length=300,
+        )
+        self.add_item(self.link_input)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        value = self.link_input.value.strip()
+        if not value:
+            await self.context.session._flash_message(
+                interaction,
+                "DM table link is required.",
+            )
+            return
+        if not value.lower().startswith(("http://", "https://")):
+            await self.context.session._flash_message(
+                interaction,
+                "DM table link must start with http:// or https://.",
+            )
+            return
+        self.context.quest.dm_table_url = value
+        await interaction.response.defer()
+        await self.context.session._update_preview(
+            self.context.quest,
+            view=self.view,
+        )
+
+
+class QuestTagsModal(_BaseQuestModal):
+    def __init__(self, context: QuestWizardContext, view: QuestWizardView) -> None:
+        super().__init__(context, view, title="Quest Tags")
+        default_value = ", ".join(context.quest.tags) if context.quest.tags else ""
+        self.tags_input = discord.ui.TextInput(
+            label="Tags",
+            placeholder="story, horror, puzzle",
+            default=default_value,
+            max_length=300,
+        )
+        self.add_item(self.tags_input)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        raw_value = self.tags_input.value.replace("\n", ",")
+        parts = [segment.strip() for segment in raw_value.split(",")]
+        cleaned = [segment for segment in parts if segment]
+        if not cleaned:
+            await self.context.session._flash_message(
+                interaction,
+                "Provide at least one tag (comma separated).",
+            )
+            return
+        # Deduplicate while preserving order
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for tag in cleaned:
+            lowered = tag.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            deduped.append(tag)
+        self.context.quest.tags = deduped
+        await interaction.response.defer()
+        await self.context.session._update_preview(
+            self.context.quest,
+            view=self.view,
+        )
+
+
+class QuestLinesVeilsModal(_BaseQuestModal):
+    def __init__(self, context: QuestWizardContext, view: QuestWizardView) -> None:
+        super().__init__(context, view, title="Additional Lines & Veils")
+        self.notes_input = discord.ui.TextInput(
+            label="Content boundaries",
+            style=discord.TextStyle.paragraph,
+            required=False,
+            max_length=1000,
+            default=context.quest.lines_and_veils or "",
+            placeholder="List any additional lines or veils players should know.",
+        )
+        self.add_item(self.notes_input)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        notes = self.notes_input.value.strip()
+        self.context.quest.lines_and_veils = notes or None
         await interaction.response.defer()
         await self.context.session._update_preview(
             self.context.quest,
@@ -742,8 +872,8 @@ class QuestCreationSession(QuestSessionBase):
             header=(
                 "**Quest Draft Preview**\n"
                 "Use the buttons below to update fields. "
-                "Title, start time, and duration are required. "
-                "Start time must be epoch seconds (UTC)."
+                "Title, start time, duration, DM table link, and tags are required. "
+                "Start time must be epoch seconds (UTC). Need epoch? https://www.hammertime.cyou/"
             ),
             view=view,
         )
@@ -778,7 +908,10 @@ class QuestUpdateSession(QuestSessionBase):
         view = QuestWizardView(context)
         await self._update_preview(
             self.quest,
-            header="**Quest Preview**\nUpdate fields with the buttons below, then save your changes. Start time must be epoch seconds (UTC).",
+            header=(
+                "**Quest Preview**\nUpdate fields with the buttons below, then save your changes. "
+                "Start time must be epoch seconds (UTC)."
+            ),
             view=view,
         )
         try:

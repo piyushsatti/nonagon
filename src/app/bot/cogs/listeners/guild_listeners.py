@@ -58,6 +58,39 @@ class GuildListenersCog(commands.Cog):
 
         return changed
 
+    async def _sync_player_role(self, member: Member, user: User) -> bool:
+        """Mirror a configured Player role to the domain PLAYER role.
+
+        Only disables PLAYER if the member does not have the mapped referee role,
+        to satisfy domain constraints.
+        """
+        settings = guild_settings_store.fetch_settings(member.guild.id) or {}
+        raw_id = settings.get("player_role_id")
+        try:
+            role_id = int(raw_id) if raw_id is not None else None
+        except (TypeError, ValueError):
+            role_id = None
+
+        if role_id is None:
+            return False
+
+        has_player_role = any(r.id == role_id for r in member.roles)
+        changed = False
+
+        if has_player_role and not user.is_player:
+            user.enable_player()
+            changed = True
+        elif not has_player_role and user.is_player and not user.is_referee:
+            try:
+                user.disable_player()
+                changed = True
+            except Exception:
+                pass
+
+        if changed:
+            await self.bot.dirty_data.put((member.guild.id, member.id))
+        return changed
+
     async def _resolve_cached_user(
         self, guild: Guild, user_id: int
     ) -> Optional[User]:
@@ -110,9 +143,10 @@ class GuildListenersCog(commands.Cog):
             member.joined_at,
             len(self.bot.guild_data[member.guild.id]["users"]),
         )
-        # Sync referee role on join if configured
+        # Sync referee/player roles on join if configured
         try:
             await self._sync_referee_role(member, user)
+            await self._sync_player_role(member, user)
         except Exception:
             # Non-fatal; continue
             pass
@@ -125,6 +159,7 @@ class GuildListenersCog(commands.Cog):
         try:
             user = await self._ensure_cached_user(after)
             await self._sync_referee_role(after, user)
+            await self._sync_player_role(after, user)
         except Exception:
             # Defensive: ignore failures
             return

@@ -11,6 +11,7 @@ from discord.ext import commands
 from app.bot.database import db_client
 from app.bot.utils.logging import get_logger
 from app.bot.utils.sync import sync_guilds
+from app.bot.cogs.manifest import DEFAULT_EXTENSIONS
 
 
 logger = get_logger(__name__)
@@ -148,6 +149,127 @@ class Diagnostics(commands.Cog):
             await ctx.send(embed=embed)
         except Exception as exc:
             await self._send_failure_for_ctx(ctx, "commandcheck", exc)
+
+    @commands.command(name="loadall")
+    @commands.is_owner()
+    async def loadall_cmd(self, ctx: commands.Context) -> None:
+        """Owner-only: load or reload all default extensions and sync commands."""
+        progress = await ctx.send(
+            "Loading default extensions and syncing commands… this may take a moment."
+        )
+
+        loaded: List[str] = []
+        reloaded: List[str] = []
+        failed: List[str] = []
+
+        for ext in DEFAULT_EXTENSIONS:
+            try:
+                if ext in self.bot.extensions:
+                    await self.bot.reload_extension(ext)
+                    reloaded.append(ext)
+                else:
+                    await self.bot.load_extension(ext)
+                    loaded.append(ext)
+            except Exception as exc:
+                logger.exception("Failed to load extension %s", ext)
+                failed.append(f"{ext}: {exc}")
+
+        sync_lines: List[str] = []
+        try:
+            global_results = await self.bot.tree.sync()
+            sync_lines.append(f"Global sync: {len(global_results)} command(s).")
+        except Exception as exc:
+            logger.exception("Global command sync failed during loadall: %s", exc)
+            sync_lines.append(f"Global sync failed: {exc}")
+
+        guild_ids = {g.id for g in self.bot.guilds}
+        if guild_ids:
+            try:
+                guild_results = await sync_guilds(self.bot, guild_ids)
+                sync_lines.extend(guild_results)
+            except Exception as exc:
+                logger.exception("Guild sync failed during loadall: %s", exc)
+                sync_lines.append(f"Guild sync failed: {exc}")
+        else:
+            sync_lines.append("No connected guilds to sync.")
+
+        embed = self._make_embed("Load All Extensions")
+        embed.add_field(
+            name="Loaded",
+            value=", ".join(sorted(loaded)) if loaded else "None",
+            inline=False,
+        )
+        embed.add_field(
+            name="Reloaded",
+            value=", ".join(sorted(reloaded)) if reloaded else "None",
+            inline=False,
+        )
+        embed.add_field(
+            name="Failed",
+            value="\n".join(failed) if failed else "None",
+            inline=False,
+        )
+        embed.add_field(
+            name="Sync Results",
+            value="\n".join(sync_lines) if sync_lines else "No sync attempts.",
+            inline=False,
+        )
+
+        try:
+            await progress.edit(content=None, embed=embed)
+        except Exception:
+            await ctx.send(embed=embed)
+
+    @commands.command(name="clearcommands")
+    @commands.is_owner()
+    async def clearcommands_cmd(
+        self, ctx: commands.Context, scope: str = "all", *guild_ids: int
+    ) -> None:
+        """Owner-only: clear slash commands from Discord for the given scope."""
+        normalized = (scope or "all").lower()
+        explicit_guilds = list(guild_ids)
+        results: List[str] = []
+
+        # Allow calling n.clearcommands 12345 (treat numeric scope as guild id)
+        if normalized.isdigit() and not explicit_guilds:
+            explicit_guilds.append(int(normalized))
+            normalized = "guild"
+
+        valid_scopes = {"all", "global", "globals", "guild", "guilds"}
+        if normalized not in valid_scopes:
+            await ctx.send(
+                "Invalid scope. Use `all`, `global`, `guild`, or provide a guild id."
+            )
+            return
+
+        try:
+            if normalized in {"all", "global", "globals"}:
+                count_before = len(self.bot.tree.get_commands())
+                self.bot.tree.clear_commands(guild=None)
+                await self.bot.tree.sync()
+                results.append(
+                    f"Global: cleared {count_before} command(s)."
+                )
+
+            if normalized in {"all", "guild", "guilds"}:
+                if not explicit_guilds:
+                    explicit_guilds = [guild.id for guild in self.bot.guilds]
+                for guild_id in sorted(set(explicit_guilds)):
+                    guild_obj = discord.Object(id=guild_id)
+                    count_before = len(self.bot.tree.get_commands(guild=guild_obj))
+                    self.bot.tree.clear_commands(guild=guild_obj)
+                    await self.bot.tree.sync(guild=guild_obj)
+                    results.append(
+                        f"Guild {guild_id}: cleared {count_before} command(s)."
+                    )
+
+            embed = self._make_embed(
+                "Command Tree Cleared",
+                "\n".join(results) if results else "No commands cleared.",
+            )
+            await ctx.send(embed=embed)
+        except Exception as exc:
+            await self._send_failure_for_ctx(ctx, "clearcommands", exc)
 
     @commands.command(name="permscheck")
     @commands.is_owner()

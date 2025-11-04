@@ -3,6 +3,7 @@
 DEFAULT_EXTENSIONS: tuple[str, ...] = (
     "app.bot.cogs.admin.extension_manager",
     "app.bot.cogs.admin.permissions",
+    "app.bot.cogs.admin.roles",
     "app.bot.cogs.listeners.guild_listeners",
     "app.bot.cogs.character.cog",
     "app.bot.cogs.guild.cog",
@@ -22,6 +23,7 @@ __all__ = ["DEFAULT_EXTENSIONS"]
 ALIASES: dict[str, str] = {
     "extension_manager": "app.bot.cogs.admin.extension_manager",
     "permissions": "app.bot.cogs.admin.permissions",
+    "roles": "app.bot.cogs.admin.roles",
     "listeners": "app.bot.cogs.listeners.guild_listeners",
     "character": "app.bot.cogs.character.cog",
     "guild": "app.bot.cogs.guild.cog",

@@ -39,9 +39,12 @@ async def quest_create(cog: "QuestCommandsCog", interaction: discord.Interaction
         await interaction.response.send_message(str(exc), ephemeral=True)
         return
 
-    # Open quest creation to any guild user. Previously creation required the
-    # REFEREE role or allowed staff; that gate has been removed so anyone may
-    # start a quest creation session.
+    # Gate quest creation to referees or configured staff
+    if not user.is_referee and not is_allowed_staff(cog.bot, member):
+        await interaction.response.send_message(
+            "Only referees or staff can create quests.", ephemeral=True
+        )
+        return
 
     if member.id in cog._active_quest_sessions:
         await interaction.response.send_message(

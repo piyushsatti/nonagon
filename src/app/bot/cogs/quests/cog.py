@@ -195,6 +195,45 @@ class QuestCommandsCog(commands.Cog):
 
         quest.channel_id = str(message.channel.id)
         quest.message_id = str(message.id)
+
+        # Auto-create a quest discussion thread linked to the announcement
+        thread = None
+        thread_name = f"{quest.quest_id}: {quest.title or quest.quest_id}"[:100]
+        try:
+            thread = await message.create_thread(
+                name=thread_name,
+                auto_archive_duration=message.channel.default_auto_archive_duration
+                if hasattr(message.channel, "default_auto_archive_duration")
+                else 1440,
+                reason="Quest discussion thread",
+            )
+        except (discord.Forbidden, discord.HTTPException):
+            thread = None
+
+        if thread is not None:
+            quest.thread_id = str(thread.id)
+            try:
+                await thread.send(
+                    f"Quest thread for `{quest.title or quest.quest_id}`. "
+                    f"Announcement: {message.jump_url}"
+                )
+            except discord.HTTPException:
+                pass
+
+            # Refresh announcement embed to include thread link
+            try:
+                await message.edit(
+                    embed=build_quest_embed(
+                        quest,
+                        guild,
+                        lookup_user_display=self.lookup_user_display,
+                        referee_display=referee_display,
+                        approved_by_display=referee_display,
+                    )
+                )
+            except discord.HTTPException:
+                pass
+
         self._persist_quest(guild.id, quest)
 
         await logger.audit(
@@ -275,6 +314,39 @@ class QuestCommandsCog(commands.Cog):
         if guild.id not in self.bot.guild_data:
             await self.bot.load_or_create_guild_cache(guild)
 
+    async def _send_completion_prompt(
+        self, guild: discord.Guild, quest: Quest
+    ) -> bool:
+        member = await self._resolve_member_for_user_id(guild, quest.referee_id)
+        if member is None:
+            return False
+
+        try:
+            dm_channel = await member.create_dm()
+        except discord.Forbidden:
+            return False
+        except Exception:
+            return False
+
+        view = EndQuestConfirmView(
+            self,
+            guild_id=guild.id,
+            quest_id=str(quest.quest_id),
+            preview=quest.title or str(quest.quest_id),
+        )
+
+        message_lines = [
+            f"Hi {member.display_name}, it looks like `{quest.title or quest.quest_id}` has reached its scheduled end.",
+            "Confirm below if the quest is complete so I can mark it finished.",
+        ]
+
+        try:
+            await dm_channel.send("\n".join(message_lines), view=view)
+        except Exception:
+            return False
+
+        return True
+
     async def _quest_schedule_loop(self) -> None:
         await self.bot.wait_until_ready()
         while not self.bot.is_closed():
@@ -325,6 +397,60 @@ class QuestCommandsCog(commands.Cog):
                         quest.quest_id,
                         guild.id,
                     )
+
+            # Prompt referees to confirm quest completion when scheduled time has passed
+            prompt_cursor = db["quests"].find(
+                {
+                    "guild_id": guild.id,
+                    "starting_at": {"$ne": None},
+                    "duration": {"$ne": None},
+                    "status": {
+                        "$nin": [
+                            QuestStatus.COMPLETED.value,
+                            QuestStatus.CANCELLED.value,
+                        ]
+                    },
+                }
+            )
+            for doc in prompt_cursor:
+                try:
+                    quest = self._quest_from_doc(guild.id, doc)
+                except Exception:
+                    logger.exception(
+                        "Failed to deserialize quest doc for completion prompt in guild %s",
+                        guild.id,
+                    )
+                    continue
+
+                if quest.status in (QuestStatus.COMPLETED, QuestStatus.CANCELLED):
+                    continue
+                if quest.starting_at is None or quest.duration is None:
+                    continue
+
+                end_at = quest.starting_at + quest.duration
+                if end_at.tzinfo is None or end_at.tzinfo.utcoffset(end_at) is None:
+                    end_at = end_at.replace(tzinfo=timezone.utc)
+                if end_at > now:
+                    continue
+
+                last_prompt = quest.last_end_prompt_at
+                if last_prompt is not None:
+                    if (now - last_prompt) < timedelta(minutes=30):
+                        continue
+
+                try:
+                    prompted = await self._send_completion_prompt(guild, quest)
+                except Exception:
+                    logger.exception(
+                        "Failed to send completion prompt for quest %s in guild %s",
+                        quest.quest_id,
+                        guild.id,
+                    )
+                    continue
+
+                if prompted:
+                    quest.last_end_prompt_at = now
+                    self._persist_quest(guild.id, quest)
 
     async def _get_cached_user(self, member: discord.Member) -> User:
         await self._ensure_guild_cache(member.guild)
@@ -793,6 +919,28 @@ class QuestCommandsCog(commands.Cog):
             duration=duration,
             image_url=doc.get("image_url"),
         )
+
+        quest.thread_id = (str(doc.get("thread_id")) if doc.get("thread_id") else None)
+
+        quest.dm_table_url = doc.get("dm_table_url")
+        raw_tags = doc.get("tags") or []
+        if isinstance(raw_tags, (list, tuple)):
+            quest.tags = [str(tag) for tag in raw_tags if str(tag).strip()]
+        elif raw_tags:
+            quest.tags = [str(raw_tags)]
+        else:
+            quest.tags = []
+        quest.lines_and_veils = doc.get("lines_and_veils") or None
+        prompt_at = doc.get("last_end_prompt_at")
+        if isinstance(prompt_at, str):
+            try:
+                prompt_at = datetime.fromisoformat(prompt_at)
+            except ValueError:
+                prompt_at = None
+        if isinstance(prompt_at, datetime):
+            if prompt_at.tzinfo is None or prompt_at.tzinfo.utcoffset(prompt_at) is None:
+                prompt_at = prompt_at.replace(tzinfo=timezone.utc)
+        quest.last_end_prompt_at = prompt_at
 
         status_value = doc.get("status")
         if status_value:

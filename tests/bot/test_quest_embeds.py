@@ -17,6 +17,9 @@ def test_build_quest_embed_uses_emoji_headers() -> None:
         referee_display="@DM",
         roster=QuestEmbedRoster(selected=["Player1"], pending=["Player2"]),
         image_url=None,
+        dm_table_url="https://example.com/table",
+        tags=["story", "heroic"],
+        thread_url="https://discord.com/channels/1/2",
     )
 
     embed = build_quest_embed(data)
@@ -24,6 +27,7 @@ def test_build_quest_embed_uses_emoji_headers() -> None:
     assert [field.name for field in embed.fields] == [
         "🎯 Quest",
         "⏰ Time",
+        "🎲 Session",
         "🧑‍🤝‍🧑 Players",
     ]
 

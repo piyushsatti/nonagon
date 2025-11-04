@@ -4,5 +4,5 @@ COPY . .
 # Ensure the app imports code from the workspace source during development
 ENV PYTHONPATH=/nonagon/src
 # Use editable install so the container points to /nonagon/src instead of copying into site-packages
-RUN python -m pip install --upgrade pip && python -m pip install -e .
+RUN python -m pip install -e .
 CMD ["python", "-m", "app.bot.main"]

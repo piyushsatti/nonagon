@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional
 from urllib.parse import urlparse
+import re
 
 import discord
 from discord import app_commands
@@ -242,7 +243,6 @@ class CharacterCommandsCog(commands.Cog):
         name: str,
         ddb_link: Optional[str],
         character_thread_link: Optional[str],
-        token_link: Optional[str],
         art_link: Optional[str],
         description: Optional[str],
         tags: List[str],
@@ -253,7 +253,6 @@ class CharacterCommandsCog(commands.Cog):
             name=name,
             ddb_link=ddb_link,
             character_thread_link=character_thread_link,
-            token_link=token_link,
             art_link=art_link,
             description=description,
             tags=tags,
@@ -395,9 +394,37 @@ class CharacterCommandsCog(commands.Cog):
             char_id = self._normalize_character_id(doc.get("character_id"))
             status_value = doc.get("status") or CharacterRole.ACTIVE.value
             status_prefix = "[Retired] " if status_value != CharacterRole.ACTIVE.value else ""
+
+            # Build preview + thread links only; leave blank if missing
+            channel_id = doc.get("announcement_channel_id")
+            message_id = doc.get("announcement_message_id")
+            preview_url = None
+            try:
+                if channel_id and message_id:
+                    preview_url = f"https://discord.com/channels/{interaction.guild.id}/{int(channel_id)}/{int(message_id)}"
+            except Exception:
+                preview_url = None
+
+            thread_url = None
+            onboarding_thread_id = doc.get("onboarding_thread_id")
+            if onboarding_thread_id:
+                try:
+                    thread_url = f"https://discord.com/channels/{interaction.guild.id}/{int(onboarding_thread_id)}"
+                except Exception:
+                    thread_url = None
+            if thread_url is None:
+                link = doc.get("character_thread_link")
+                if isinstance(link, str) and link.startswith(("http://", "https://")):
+                    thread_url = link
+
+            value_lines = [
+                f"Preview: {preview_url or ''}",
+                f"Thread: {thread_url or ''}",
+            ]
+
             embed.add_field(
                 name=f"{status_prefix}{char_id} — {doc.get('name', 'Unnamed')}",
-                value=doc.get("ddb_link", "No sheet link"),
+                value="\n".join(value_lines),
                 inline=False,
             )
 
@@ -695,7 +722,7 @@ class CharacterSessionBase(WizardSessionBase):
 
         try:
             await thread.add_user(self.member)
-        except discord.HTTPException:
+        except (discord.HTTPException, discord.Forbidden):
             pass
 
         try:
@@ -703,7 +730,7 @@ class CharacterSessionBase(WizardSessionBase):
                 f"Onboarding thread for {self.member.mention}. "
                 f"Announcement: {announcement.jump_url}"
             )
-        except discord.HTTPException:
+        except (discord.HTTPException, discord.Forbidden):
             pass
 
         return thread
@@ -829,7 +856,6 @@ class CharacterSessionBase(WizardSessionBase):
             name=(self.data.get("name") or "Unnamed Character"),
             ddb_link=self.data.get("ddb_link"),
             character_thread_link=self.data.get("character_thread_link"),
-            token_link=self.data.get("token_link"),
             art_link=self.data.get("art_link"),
             description=self.data.get("description"),
             tags=self._parse_tags(),
@@ -857,6 +883,16 @@ class CharacterSessionBase(WizardSessionBase):
     @staticmethod
     def _validate_url(value: str) -> str:
         return validate_http_url(value)
+
+    @staticmethod
+    def _validate_ddb_link(value: str) -> str:
+        url = validate_http_url(value)
+        pattern = r"^https://www\.dndbeyond\.com/characters/\d+$"
+        if not re.match(pattern, url):
+            raise ValueError(
+                "Provide a D&D Beyond character link like https://www.dndbeyond.com/characters/142392388."
+            )
+        return url
 
     @staticmethod
     def _validate_description(value: str) -> str:
@@ -978,11 +1014,14 @@ class CharacterCreationSession(CharacterSessionBase):
         self.draft = CharacterDraft()
 
     def _build_preview_embed(self, draft: CharacterDraft) -> discord.Embed:
+        thread_preview = (
+            draft.character_thread_link
+            or "*A private onboarding thread will be created automatically when you submit.*"
+        )
         embed = self.cog._build_character_embed(
             name=draft.name or "Unnamed Character",
             ddb_link=draft.ddb_link,
-            character_thread_link=draft.character_thread_link,
-            token_link=draft.token_link,
+            character_thread_link=thread_preview,
             art_link=draft.art_link,
             description=draft.description,
             tags=draft.tags,
@@ -1003,7 +1042,8 @@ class CharacterCreationSession(CharacterSessionBase):
         header = (
             "**Character Draft Preview**\n"
             "Use the buttons below to update fields. "
-            "Name, sheet, thread, token, and art links are required."
+            "Name, sheet, and art link are required. "
+            "A private thread will be created automatically, and your art will double as the token image."
         )
         try:
             await self._update_preview(
@@ -1061,14 +1101,17 @@ class CharacterCreationSession(CharacterSessionBase):
         description = self._normalize_optional(self.draft.description)
         notes = self._normalize_optional(self.draft.notes)
         tags = list(self.draft.tags)
+        art_link = self.draft.art_link or ""
+        token_link = art_link
+        thread_link_seed = self.draft.character_thread_link or ""
         character = Character(
             character_id=str(char_id),
             owner_id=user.user_id,
             name=self.draft.name or "",
             ddb_link=self.draft.ddb_link or "",
-            character_thread_link=self.draft.character_thread_link or "",
-            token_link=self.draft.token_link or "",
-            art_link=self.draft.art_link or "",
+            character_thread_link=thread_link_seed,
+            token_link=token_link,
+            art_link=art_link,
             description=description,
             notes=notes,
             tags=tags,
@@ -1076,14 +1119,6 @@ class CharacterCreationSession(CharacterSessionBase):
             guild_id=self.guild.id,
             status=CharacterRole.ACTIVE,
         )
-
-        try:
-            character.validate_character()
-        except ValueError as exc:
-            await self._safe_send(f"Character validation failed: {exc}")
-            return CharacterCreationResult(
-                False, error=f"Character validation failed: {exc}"
-            )
 
         if user.player is None:
             user.enable_player()
@@ -1119,6 +1154,7 @@ class CharacterCreationSession(CharacterSessionBase):
 
         thread = None
         thread_note = None
+        thread_link_url: Optional[str] = None
         thread_name = f"Character: {character.name}"[:90]
         thread_parent = announcement.channel
         if isinstance(thread_parent, discord.TextChannel):
@@ -1129,14 +1165,36 @@ class CharacterCreationSession(CharacterSessionBase):
                 thread_note = (
                     "I couldn't create a private onboarding thread. Grant me the **Create Private Threads** permission or allow thread creation in the configured channel."
                 )
+            else:
+                thread_link_url = f"https://discord.com/channels/{self.guild.id}/{thread.id}"
         else:
             thread_note = "Character announcements are posted in a channel that does not support threads."
+
+        if thread_link_url is None:
+            fallback_link = thread_link_seed or announcement.jump_url
+            character.character_thread_link = fallback_link
+        else:
+            character.character_thread_link = thread_link_url
 
         if isinstance(announcement.channel, discord.TextChannel):
             character.announcement_channel_id = announcement.channel.id
         character.announcement_message_id = announcement.id
         if thread is not None:
             character.onboarding_thread_id = thread.id
+
+        try:
+            character.validate_character()
+        except ValueError as exc:
+            await self._safe_send(f"Character validation failed: {exc}")
+            return CharacterCreationResult(
+                False, error=f"Character validation failed: {exc}"
+            )
+
+        try:
+            updated_embed = self.cog._build_character_embed_from_model(character)
+            await announcement.edit(embed=updated_embed)
+        except discord.HTTPException:
+            pass
 
         self.cog._persist_character(self.guild.id, character)
         await self.cog.bot.dirty_data.put((self.guild.id, self.member.id))
@@ -1145,9 +1203,8 @@ class CharacterCreationSession(CharacterSessionBase):
             f"Character `{character.name}` (`{char_id}`) created!",
             f"Announcement: {announcement.jump_url}",
         ]
-        if thread is not None:
-            thread_link = f"https://discord.com/channels/{self.guild.id}/{thread.id}"
-            summary_lines.append(f"Onboarding thread: {thread_link}")
+        if thread_link_url:
+            summary_lines.append(f"Onboarding thread: {thread_link_url}")
         if thread_note:
             summary_lines.append(thread_note)
 
@@ -1209,40 +1266,6 @@ class CharacterWizardView(
                     field="ddb_link",
                     title="Character Sheet",
                     label="D&D Beyond or sheet URL",
-                )
-            )
-        except discord.NotFound:
-            return
-
-    @discord.ui.button(label="Thread", style=discord.ButtonStyle.primary)
-    async def edit_thread(  # type: ignore[override]
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ) -> None:
-        try:
-            await interaction.response.send_modal(
-                CharacterUrlModal(
-                    self.context,
-                    self,
-                    field="character_thread_link",
-                    title="Character Thread",
-                    label="Forum or thread URL",
-                )
-            )
-        except discord.NotFound:
-            return
-
-    @discord.ui.button(label="Token", style=discord.ButtonStyle.secondary)
-    async def edit_token(  # type: ignore[override]
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ) -> None:
-        try:
-            await interaction.response.send_modal(
-                CharacterUrlModal(
-                    self.context,
-                    self,
-                    field="token_link",
-                    title="Token Image",
-                    label="Token image URL",
                 )
             )
         except discord.NotFound:
@@ -1332,10 +1355,6 @@ class CharacterWizardView(
             missing.append("name")
         if not draft.ddb_link:
             missing.append("sheet link")
-        if not draft.character_thread_link:
-            missing.append("thread link")
-        if not draft.token_link:
-            missing.append("token link")
         if not draft.art_link:
             missing.append("art link")
         if missing:
@@ -1453,6 +1472,13 @@ class CharacterUrlModal(_CharacterFieldModal):
         title: str,
         label: str,
     ) -> None:
+        if field == "ddb_link":
+            placeholder = "https://www.dndbeyond.com/characters/########"
+            validator = context.session._validate_ddb_link
+        else:
+            placeholder = "Must start with http or https."
+            validator = context.session._validate_url
+
         super().__init__(
             context,
             view,
@@ -1461,9 +1487,14 @@ class CharacterUrlModal(_CharacterFieldModal):
             label=label,
             default=getattr(context.draft, field) or "",
             max_length=250,
-            placeholder="Must start with http or https.",
-            validator=context.session._validate_url,
+            placeholder=placeholder,
+            validator=validator,
         )
+
+    def apply(self, value: Optional[str]) -> None:
+        super().apply(value)
+        if self.field == "art_link":
+            self.context.draft.token_link = value
 
 
 class CharacterOptionalModal(_CharacterFieldModal):
@@ -1573,8 +1604,8 @@ class CharacterUpdateSession(CharacterSessionBase):
                 ),
                 (
                     "ddb_link",
-                    "**Step 2:** Update the D&D Beyond (or sheet) link.",
-                    self._validate_url,
+                    "**Step 2:** Update the D&D Beyond link (https://www.dndbeyond.com/characters/########).",
+                    self._validate_ddb_link,
                     True,
                     False,
                 ),

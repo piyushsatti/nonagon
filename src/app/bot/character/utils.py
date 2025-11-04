@@ -17,7 +17,6 @@ def build_character_embed(
     name: str,
     ddb_link: Optional[str],
     character_thread_link: Optional[str],
-    token_link: Optional[str],
     art_link: Optional[str],
     description: Optional[str],
     tags: List[str],
@@ -46,11 +45,6 @@ def build_character_embed(
         inline=False,
     )
     embed.add_field(
-        name="Token",
-        value=token_link or "Not set",
-        inline=False,
-    )
-    embed.add_field(
         name="Status",
         value=status_label(status),
         inline=False,
@@ -75,7 +69,6 @@ def build_character_embed_from_model(
         name=character.name,
         ddb_link=character.ddb_link,
         character_thread_link=character.character_thread_link,
-        token_link=character.token_link,
         art_link=character.art_link,
         description=character.description,
         tags=character.tags or [],

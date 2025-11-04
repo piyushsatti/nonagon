@@ -33,6 +33,10 @@ class QuestEmbedData:
     image_url: str | None = None
     last_updated_at: datetime | None = None
     approved_by_display: str | None = None
+    dm_table_url: str | None = None
+    tags: Sequence[str] = field(default_factory=list)
+    lines_and_veils: str | None = None
+    thread_url: str | None = None
 
 
 def build_quest_embed(data: QuestEmbedData) -> discord.Embed:
@@ -45,6 +49,16 @@ def build_quest_embed(data: QuestEmbedData) -> discord.Embed:
 
     embed.add_field(name="🎯 Quest", value=_format_quest_section(data), inline=False)
     embed.add_field(name="⏰ Time", value=_format_time_section(data.starting_at, data.duration), inline=False)
+    embed.add_field(
+        name="🎲 Session",
+        value=_format_session_section(
+            data.dm_table_url,
+            data.tags,
+            data.lines_and_veils,
+            data.thread_url,
+        ),
+        inline=False,
+    )
     embed.add_field(name="🧑‍🤝‍🧑 Players", value=_format_players_section(data.roster), inline=False)
 
     footer_text = _format_footer(
@@ -122,6 +136,37 @@ def _format_labeled_list(label: str, items: Iterable[str]) -> str:
     lines = [f"{label}:"]
     for item in items:
         lines.append(f"- {item}")
+    return "\n".join(lines)
+
+
+def _format_session_section(
+    dm_table_url: str | None,
+    tags: Sequence[str],
+    lines_and_veils: str | None,
+    thread_url: str | None,
+) -> str:
+    lines: list[str] = []
+
+    if dm_table_url:
+        lines.append(f"DM Table: [Open link]({dm_table_url})")
+    else:
+        lines.append("DM Table: Not set")
+
+    if tags:
+        formatted = ", ".join(f"`{tag}`" for tag in tags)
+        lines.append(f"Tags: {formatted}")
+    else:
+        lines.append("Tags: Not set")
+
+    if thread_url:
+        lines.append(f"Thread: [Open thread]({thread_url})")
+
+    if lines_and_veils:
+        snippet = lines_and_veils.strip()
+        if len(snippet) > 500:
+            snippet = snippet[:497] + "…"
+        lines.append(f"Lines & Veils: {snippet}")
+
     return "\n".join(lines)
 
 

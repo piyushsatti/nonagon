@@ -359,10 +359,57 @@ class EndQuestConfirmView(discord.ui.View):
     async def confirm_button(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
-        modal = ConfirmEndQuestModal(
-            self.service, guild_id=self.guild_id, quest_id=self.quest_id
-        )
-        await interaction.response.send_modal(modal)
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        try:
+            quest_id_obj = QuestID.parse(self.quest_id)
+        except ValueError as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+            return
+
+        guild = self.service.bot.get_guild(self.guild_id)
+        if guild is None:
+            await interaction.followup.send(
+                "I couldn't resolve the guild for this quest. Please try again from the server.",
+                ephemeral=True,
+            )
+            return
+
+        quest = self.service.fetch_quest(guild.id, quest_id_obj)
+        if quest is None:
+            await interaction.followup.send("Quest not found.", ephemeral=True)
+            return
+
+        member = guild.get_member(interaction.user.id)
+        if member is None:
+            try:
+                member = await guild.fetch_member(interaction.user.id)
+            except Exception:
+                member = None
+
+        if member is None:
+            await interaction.followup.send(
+                "I couldn't verify you as a guild member. Quest not ended.",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            message = await self.service.execute_end(guild, member, quest_id_obj)
+        except ValueError as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+            return
+        except Exception as exc:
+            await interaction.followup.send(
+                f"Failed to mark quest as completed: {exc}", ephemeral=True
+            )
+            return
+
+        for child in self.children:
+            child.disabled = True  # type: ignore[attr-defined]
+        self.stop()
+
+        await interaction.followup.send(message, ephemeral=True)
 
     @discord.ui.button(
         label="Cancel",
@@ -376,81 +423,6 @@ class EndQuestConfirmView(discord.ui.View):
             "End-quest request cancelled.", ephemeral=True
         )
         self.stop()
-
-
-class ConfirmEndQuestModal(discord.ui.Modal):
-    """Modal asking the referee to type the Quest ID to confirm."""
-
-    def __init__(self, service: "QuestCommandsCog", *, guild_id: int, quest_id: str) -> None:
-        super().__init__(title="Confirm ending quest")
-        self.service = service
-        self.guild_id = guild_id
-        self.quest_id = quest_id
-
-        self.confirm_input = discord.ui.TextInput(
-            label="Type the Quest ID to confirm",
-            placeholder="e.g. QUESA1B2C3",
-            max_length=64,
-            required=True,
-        )
-        self.add_item(self.confirm_input)
-
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer(ephemeral=True, thinking=True)
-
-        typed = (self.confirm_input.value or "").strip().upper()
-        try:
-            expected = str(QuestID.parse(self.quest_id)).upper()
-        except Exception:
-            await interaction.followup.send(
-                "Invalid quest identifier on confirmation. Quest not ended.",
-                ephemeral=True,
-            )
-            return
-
-        if typed != expected:
-            await interaction.followup.send(
-                "Confirmation did not match the Quest ID. Quest not ended.",
-                ephemeral=True,
-            )
-            return
-
-        guild = self.service.bot.get_guild(self.guild_id)
-        if guild is None:
-            await interaction.followup.send(
-                "I couldn't resolve the server for this quest. Please try again.",
-                ephemeral=True,
-            )
-            return
-
-        # Resolve the member in the guild from the DM user
-        member = guild.get_member(int(interaction.user.id))
-        if member is None:
-            try:
-                member = await guild.fetch_member(int(interaction.user.id))
-            except Exception:
-                member = None
-
-        if member is None:
-            await interaction.followup.send(
-                "I couldn't verify your membership in the server. Quest not ended.",
-                ephemeral=True,
-            )
-            return
-
-        try:
-            quest_id_obj = QuestID.parse(self.quest_id)
-            message = await self.service.execute_end(guild, member, quest_id_obj)
-        except ValueError as exc:
-            await interaction.followup.send(str(exc), ephemeral=True)
-            return
-        except Exception as exc:
-            await interaction.followup.send(
-                f"Failed to mark quest as completed: {exc}", ephemeral=True
-            )
-            return
-
-        await interaction.followup.send(message, ephemeral=True)
 
 
 class SignupDecisionView(discord.ui.View):
@@ -468,72 +440,69 @@ class SignupDecisionView(discord.ui.View):
         self.guild = guild
         self.quest = quest
         self.reviewer = reviewer
-        self.pending_signups: List[PlayerSignUp] = list(pending)
-        self.pending_map: dict[str, PlayerSignUp] = {
-            str(signup.user_id): signup for signup in self.pending_signups
+        self.signups: List[PlayerSignUp] = list(quest.signups or pending)
+        if not self.signups:
+            self.signups = list(pending)
+        self.signup_map: dict[str, PlayerSignUp] = {
+            str(signup.user_id): signup for signup in self.signups
         }
-        self.selected_user_id: Optional[str] = None
+        self.selected_signup: Optional[PlayerSignUp] = None
 
         self.select = SignupPendingSelect(self)
         self.add_item(self.select)
-        self.accept_button = SignupApproveButton()
-        self.decline_button = SignupDeclineButton()
-        self.add_item(self.accept_button)
-        self.add_item(self.decline_button)
-        self.close_button = SignupCloseButton()
-        self.add_item(self.close_button)
+        self.add_button = SignupApproveButton()
+        self.remove_button = SignupDeclineButton()
+        self.add_item(self.add_button)
+        self.add_item(self.remove_button)
 
         self._refresh_from_quest()
 
     def render_panel_text(self) -> str:
         quest_name = self.quest.title or str(self.quest.quest_id)
-        lines = [f"Pending requests for `{quest_name}`:"]
-        if not self.pending_signups:
-            lines.append("All requests have been reviewed.")
-            if self.quest.is_signup_open:
-                lines.append("You can close signups once the roster looks right.")
-            if not self.quest.is_signup_open:
-                lines.append("Signups are currently closed for this quest.")
+        lines = [f"Requests for `{quest_name}`:"]
+        if not self.signups:
+            lines.append("No signups yet.")
             return "\n".join(lines)
 
         if not self.quest.is_signup_open:
             lines.append("Signups are currently closed for this quest.")
 
-        for signup in self.pending_signups:
-            marker = "->" if str(signup.user_id) == self.selected_user_id else "- "
+        for signup in self.signups:
+            marker = "->" if signup is self.selected_signup else "- "
+            status_label = (
+                "Selected" if signup.status is PlayerStatus.SELECTED else "Pending"
+            )
             label = self.service.format_signup_label(self.guild.id, signup)
-            lines.append(f"{marker} {label}")
+            lines.append(f"{marker}[{status_label}] {label}")
         return "\n".join(lines)
 
     def _build_options(self) -> List[discord.SelectOption]:
         options: List[discord.SelectOption] = []
-        for signup in self.pending_signups[:25]:
-            user_id_str = str(signup.user_id)
+        for signup in self.signups[:25]:
+            status_label = (
+                "Selected" if signup.status is PlayerStatus.SELECTED else "Pending"
+            )
             label = self.service.format_signup_label(self.guild.id, signup)
             options.append(
                 discord.SelectOption(
-                    label=label[:100],
-                    value=user_id_str,
-                    default=user_id_str == self.selected_user_id,
+                    label=f"[{status_label}] {label}"[:100],
+                    value=str(signup.user_id),
+                    default=signup is self.selected_signup,
                 )
             )
         return options
 
     def _refresh_from_quest(self) -> None:
-        self.pending_signups = [
-            signup
-            for signup in self.quest.signups
-            if signup.status is not PlayerStatus.SELECTED
-        ]
-        self.pending_map = {
-            str(signup.user_id): signup for signup in self.pending_signups
+        self.signups = list(self.quest.signups)
+        self.signup_map = {
+            str(signup.user_id): signup for signup in self.signups
         }
 
-        if self.selected_user_id and self.selected_user_id not in self.pending_map:
-            self.selected_user_id = None
+        if self.selected_signup not in self.signups:
+            self.selected_signup = None
 
-        if not self.selected_user_id and self.pending_signups:
-            self.selected_user_id = str(self.pending_signups[0].user_id)
+        if self.selected_signup is None and self.signups:
+            self.selected_signup = self.signups[0]
 
         options = self._build_options()
         if not options:
@@ -544,26 +513,37 @@ class SignupDecisionView(discord.ui.View):
             ]
             self.select.disabled = True
             self.select.placeholder = NO_PENDING_REQUESTS_LABEL
-            self.accept_button.disabled = True
-            self.decline_button.disabled = True
         else:
             self.select.options = options
             self.select.disabled = False
             self.select.placeholder = "Select a request to review"
-            self.accept_button.disabled = False
-            self.decline_button.disabled = False
 
-        self.close_button.disabled = not self.quest.is_signup_open
-        if not self.quest.is_signup_open:
-            self.accept_button.disabled = True
-            self.decline_button.disabled = True
+        current_signup = self.selected_signup
+        add_enabled = bool(
+            current_signup
+            and current_signup.status is not PlayerStatus.SELECTED
+            and self.quest.is_signup_open
+        )
+        remove_enabled = bool(
+            current_signup and current_signup.status is PlayerStatus.SELECTED
+        )
+
+        self.add_button.disabled = not add_enabled
+        self.remove_button.disabled = not remove_enabled
 
     async def handle_accept(self, interaction: discord.Interaction) -> None:
-        signup = self.pending_map.get(self.selected_user_id or "")
+        signup = self.selected_signup
         if signup is None:
             await send_ephemeral_message(
                 interaction,
-                "Select a request to accept first.",
+                "Select a request to add first.",
+            )
+            return
+
+        if signup.status is PlayerStatus.SELECTED:
+            await send_ephemeral_message(
+                interaction,
+                "That player is already on the roster.",
             )
             return
 
@@ -613,47 +593,35 @@ class SignupDecisionView(discord.ui.View):
         )
 
         self._refresh_from_quest()
-        await interaction.message.edit(content=self.render_panel_text(), view=self)
+        await interaction.edit_original_response(
+            content=self.render_panel_text(), view=self
+        )
 
         await interaction.followup.send(
-            f"Accepted {self.service.format_signup_label(self.guild.id, signup)}.",
+            f"Added {self.service.format_signup_label(self.guild.id, signup)} to the roster.",
             ephemeral=True,
         )
 
     async def handle_decline(self, interaction: discord.Interaction) -> None:
-        signup = self.pending_map.get(self.selected_user_id or "")
+        signup = self.selected_signup
         if signup is None:
             await send_ephemeral_message(
                 interaction,
-                "Select a request to decline first.",
+                "Select a player to remove first.",
+            )
+            return
+
+        if signup.status is not PlayerStatus.SELECTED:
+            await send_ephemeral_message(
+                interaction,
+                "Select someone who is already on the roster to remove them.",
             )
             return
 
         await interaction.response.defer(ephemeral=True, thinking=True)
 
-        try:
-            via_api = await self.service.remove_signup_via_api(
-                self.guild, self.quest, signup.user_id
-            )
-        except ValueError as exc:
-            await interaction.followup.send(
-                f"{exc} Please try again.", ephemeral=True
-            )
-            return
-
-        if not via_api:
-            try:
-                self.quest.remove_signup(signup.user_id)
-            except ValueError as exc:
-                await interaction.followup.send(
-                    f"{exc} Please try again.", ephemeral=True
-                )
-                return
-            self.service.persist_quest(self.guild.id, self.quest)
-        else:
-            refreshed = self.service.fetch_quest(self.guild.id, self.quest.quest_id)
-            if refreshed is not None:
-                self.quest = refreshed
+        signup.status = PlayerStatus.APPLIED
+        self.service.persist_quest(self.guild.id, self.quest)
 
         await self.service.sync_quest_announcement(
             self.guild,
@@ -668,78 +636,19 @@ class SignupDecisionView(discord.ui.View):
         await logger.audit(
             self.service.bot,
             self.guild,
-            "%s declined %s for `%s`",
+            "%s removed %s from `%s`",
             self.reviewer.mention,
             signup_label,
             self.quest.title or self.quest.quest_id,
         )
 
         self._refresh_from_quest()
-        await interaction.message.edit(content=self.render_panel_text(), view=self)
+        await interaction.edit_original_response(
+            content=self.render_panel_text(), view=self
+        )
 
         await interaction.followup.send(
-            f"Declined {self.service.format_signup_label(self.guild.id, signup)}.",
-            ephemeral=True,
-        )
-
-    async def handle_close(self, interaction: discord.Interaction) -> None:
-        if not self.quest.is_signup_open:
-            await send_ephemeral_message(
-                interaction,
-                "Signups are already closed for this quest.",
-            )
-            return
-
-        await interaction.response.defer(ephemeral=True, thinking=True)
-
-        try:
-            via_api = await self.service.close_signups_via_api(self.guild, self.quest)
-        except ValueError as exc:
-            await interaction.followup.send(
-                f"{exc} Please try again.", ephemeral=True
-            )
-            return
-
-        if not via_api:
-            try:
-                self.quest.close_signups()
-            except ValueError as exc:
-                await interaction.followup.send(
-                    f"{exc} Please try again.", ephemeral=True
-                )
-                return
-            self.service.persist_quest(self.guild.id, self.quest)
-        else:
-            refreshed = self.service.fetch_quest(self.guild.id, self.quest.quest_id)
-            if refreshed is not None:
-                self.quest = refreshed
-            else:
-                try:
-                    self.quest.close_signups()
-                except ValueError:
-                    pass
-
-        await self.service.sync_quest_announcement(
-            self.guild,
-            self.quest,
-            approved_by_display=self.reviewer.mention,
-            last_updated_at=datetime.now(timezone.utc),
-        )
-
-        await self._notify_channel_closed()
-        await logger.audit(
-            self.service.bot,
-            self.guild,
-            "%s closed signups for `%s`",
-            self.reviewer.mention,
-            self.quest.title or self.quest.quest_id,
-        )
-
-        self._refresh_from_quest()
-        await interaction.message.edit(content=self.render_panel_text(), view=self)
-
-        await interaction.followup.send(
-            "Signups closed. Players can no longer request to join.",
+            f"Removed {self.service.format_signup_label(self.guild.id, signup)} from the roster.",
             ephemeral=True,
         )
 
@@ -818,13 +727,13 @@ class SignupDecisionView(discord.ui.View):
 
 class SignupPendingSelect(discord.ui.Select):
     def __init__(self, parent: SignupDecisionView) -> None:
-        self.parent = parent
+        self.decision_view = parent
         options = parent._build_options()
+        disabled = not bool(options)
         if not options:
-            options = [discord.SelectOption(label=NO_PENDING_REQUESTS_LABEL, value="NONE")]
-            disabled = True
-        else:
-            disabled = False
+            options = [
+                discord.SelectOption(label=NO_PENDING_REQUESTS_LABEL, value="NONE", default=True)
+            ]
         super().__init__(
             placeholder="Select a request to review",
             min_values=1,
@@ -837,7 +746,7 @@ class SignupPendingSelect(discord.ui.Select):
         if self.disabled:
             await send_ephemeral_message(
                 interaction,
-                "There are no pending requests to review.",
+                "There are no requests to review right now.",
             )
             return
 
@@ -845,20 +754,21 @@ class SignupPendingSelect(discord.ui.Select):
         if value == "NONE":
             await send_ephemeral_message(
                 interaction,
-                "There are no pending requests to review.",
+                "There are no requests to review right now.",
             )
             return
 
-        self.parent.selected_user_id = value
-        self.parent._refresh_from_quest()
+        signup = self.decision_view.signup_map.get(value)
+        self.decision_view.selected_signup = signup
+        self.decision_view._refresh_from_quest()
         await interaction.response.edit_message(
-            content=self.parent.render_panel_text(), view=self.parent
+            content=self.decision_view.render_panel_text(), view=self.decision_view
         )
 
 
 class SignupApproveButton(discord.ui.Button):
     def __init__(self) -> None:
-        super().__init__(label="Accept", style=discord.ButtonStyle.success)
+        super().__init__(label="Add Player", style=discord.ButtonStyle.success)
 
     async def callback(self, interaction: discord.Interaction) -> None:
         view = self.view
@@ -868,19 +778,9 @@ class SignupApproveButton(discord.ui.Button):
 
 class SignupDeclineButton(discord.ui.Button):
     def __init__(self) -> None:
-        super().__init__(label="Decline", style=discord.ButtonStyle.danger)
+        super().__init__(label="Remove Player", style=discord.ButtonStyle.danger)
 
     async def callback(self, interaction: discord.Interaction) -> None:
         view = self.view
         if isinstance(view, SignupDecisionView):
             await view.handle_decline(interaction)
-
-
-class SignupCloseButton(discord.ui.Button):
-    def __init__(self) -> None:
-        super().__init__(label="Close Signups", style=discord.ButtonStyle.secondary)
-
-    async def callback(self, interaction: discord.Interaction) -> None:
-        view = self.view
-        if isinstance(view, SignupDecisionView):
-            await view.handle_close(interaction)

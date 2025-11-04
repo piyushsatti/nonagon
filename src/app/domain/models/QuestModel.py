@@ -30,6 +30,8 @@ class Quest:
     raw: str  # raw markdown input
     channel_id: str | None = None
     message_id: str | None = None
+    thread_id: str | None = None
+    last_end_prompt_at: datetime = None
 
     # Metadata
     title: str = None
@@ -37,6 +39,9 @@ class Quest:
     starting_at: datetime = None
     duration: timedelta = None
     image_url: str = None
+    dm_table_url: str = None
+    tags: List[str] = field(default_factory=list)
+    lines_and_veils: str = None
 
     # Links
     linked_quests: List[QuestID] = field(default_factory=list)
@@ -134,6 +139,25 @@ class Quest:
             or self.image_url.startswith("https://")
         ):
             raise ValueError("Image URL must start with http:// or https://")
+
+        if not self.dm_table_url:
+            raise ValueError("DM table link is required.")
+        if not self.dm_table_url.startswith(("http://", "https://")):
+            raise ValueError("DM table link must start with http:// or https://")
+
+        cleaned_tags: list[str] = []
+        for tag in self.tags or []:
+            normalized = tag.strip()
+            if normalized:
+                cleaned_tags.append(normalized)
+        cleaned_tags = list(dict.fromkeys(cleaned_tags))
+        if not cleaned_tags:
+            raise ValueError("At least one quest tag is required.")
+        self.tags = cleaned_tags
+
+        if self.lines_and_veils is not None:
+            text = self.lines_and_veils.strip()
+            self.lines_and_veils = text or None
 
     def from_dict(self, data: Dict[str, Any]) -> Quest:
         valid = {f.name for f in fields(self)}

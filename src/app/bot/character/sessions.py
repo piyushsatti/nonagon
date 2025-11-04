@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Dict, List, Optional
 from urllib.parse import urlparse
+import re
 
 import discord
 
@@ -162,6 +163,16 @@ class CharacterSessionBase:
         return url
 
     @staticmethod
+    def _validate_ddb_link(value: str) -> str:
+        url = value.strip()
+        pattern = r"^https://www\.dndbeyond\.com/characters/\d+$"
+        if not re.match(pattern, url):
+            raise ValueError(
+                "Provide a D&D Beyond character link like https://www.dndbeyond.com/characters/142392388."
+            )
+        return url
+
+    @staticmethod
     def _validate_description(value: str) -> str:
         text = value.strip()
         if len(text) > 500:
@@ -268,9 +279,9 @@ class CharacterCreationSession(CharacterSessionBase):
                 validator=self._validate_name,
             )
             self.data["ddb_link"] = await self._ask(
-                "**Step 2:** Share the D&D Beyond (or sheet) link.",
+                "**Step 2:** Share the D&D Beyond link (e.g. https://www.dndbeyond.com/characters/142392388).",
                 required=True,
-                validator=self._validate_url,
+                validator=self._validate_ddb_link,
             )
             self.data["character_thread_link"] = await self._ask(
                 "**Step 3:** What's the forum/thread link for this character?",
@@ -428,7 +439,7 @@ class CharacterCreationSession(CharacterSessionBase):
 
         thread = None
         thread_note = None
-        thread_name = f"Character: {character.name}"[:90]
+        thread_name = f"{char_id}: {character.name}"[:90]
         thread_parent = announcement.channel
         if isinstance(thread_parent, discord.TextChannel):
             thread = await self._create_character_thread(
@@ -446,6 +457,9 @@ class CharacterCreationSession(CharacterSessionBase):
         character.announcement_message_id = announcement.id
         if thread is not None:
             character.onboarding_thread_id = thread.id
+            character.character_thread_link = (
+                f"https://discord.com/channels/{self.guild.id}/{thread.id}"
+            )
 
         self.cog._persist_character(self.guild.id, character)
         await self.cog.bot.dirty_data.put((self.guild.id, self.member.id))
@@ -591,8 +605,8 @@ class CharacterUpdateSession(CharacterSessionBase):
                 ),
                 (
                     "ddb_link",
-                    "**Step 2:** Update the D&D Beyond (or sheet) link.",
-                    self._validate_url,
+                    "**Step 2:** Update the D&D Beyond link (https://www.dndbeyond.com/characters/########).",
+                    self._validate_ddb_link,
                     True,
                     False,
                 ),
