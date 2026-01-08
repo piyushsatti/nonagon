@@ -33,10 +33,6 @@ Thank you for your interest in contributing to Nonagon! This document provides g
    cd frontend
    npm install
    cd ..
-
-   # Pre-commit hooks
-   pip install pre-commit
-   pre-commit install
    ```
 
 3. **Set up environment variables**
@@ -88,20 +84,6 @@ def calculate_xp(base_xp: int, multiplier: float = 1.0) -> int:
 ### Configuration Files
 
 - YAML, JSON, TOML: 2 spaces for indentation
-
-### Pre-commit Hooks
-
-Pre-commit hooks automatically run on commit:
-
-```bash
-pre-commit run --all-files  # Run manually
-```
-
-Hooks include:
-- Ruff linting and formatting
-- Trailing whitespace removal
-- End-of-file fixer
-- JSON/YAML validation
 
 ## Testing
 
@@ -165,6 +147,7 @@ tests/
    ```
 
 2. **Make your changes**
+
    - Follow code style guidelines
    - Add/update tests
    - Update documentation if needed
@@ -174,7 +157,6 @@ tests/
    ```bash
    make lint
    make test
-   pre-commit run --all-files
    ```
 
 4. **Commit with clear messages**
@@ -184,6 +166,7 @@ tests/
    ```
 
    Follow [Conventional Commits](https://www.conventionalcommits.org/):
+
    - `feat:` New feature
    - `fix:` Bug fix
    - `docs:` Documentation
@@ -268,6 +251,7 @@ JSON Schema files are the source of truth for data contracts:
 ## Recognition
 
 Contributors are recognized in:
+
 - GitHub contributors list
 - Release notes for significant contributions
 

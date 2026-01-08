@@ -4,14 +4,14 @@ Nonagon is a multi-guild Discord automation platform that streamlines quest sche
 
 ## Tech Stack
 
-| Layer | Technology |
-|-------|------------|
-| API | Python 3.11+, FastAPI, Strawberry GraphQL, SQLAlchemy |
-| Bot | Python 3.11+, discord.py, psycopg2 |
-| Frontend | React 18, Parcel, graphql-request |
-| Database | PostgreSQL 16+ (via Docker or Supabase) |
-| Schemas | JSON Schema (source of truth) |
-| Dev Tools | pip, Ruff, pytest, Docker (for database) |
+| Layer     | Technology                                            |
+| --------- | ----------------------------------------------------- |
+| API       | Python 3.11+, FastAPI, Strawberry GraphQL, SQLAlchemy |
+| Bot       | Python 3.11+, discord.py, psycopg2                    |
+| Frontend  | React 18, Parcel, graphql-request                     |
+| Database  | PostgreSQL 16+ (self-hosted or managed)               |
+| Schemas   | JSON Schema (source of truth)                         |
+| Dev Tools | pip, Ruff, pytest                                     |
 
 ## Quick Start
 
@@ -19,7 +19,7 @@ Nonagon is a multi-guild Discord automation platform that streamlines quest sche
 
 - Python 3.11+
 - Node.js 20+
-- Docker & Docker Compose (for PostgreSQL database)
+- PostgreSQL instance you control (managed service or your own container)
 
 ### 1. Clone & Install
 
@@ -34,18 +34,16 @@ pip install -e ".[dev]"
 cd frontend && npm install && cd ..
 ```
 
-### 2. Start Database
+### 2. Point to a Database
 
-```bash
-make db-up  # Starts PostgreSQL in Docker
-```
+Provision PostgreSQL (managed cloud, local install, or your own container) and grab its connection string.
 
 ### 3. Environment Variables
 
 Copy `.env.example` to `.env` and configure:
 
 ```dotenv
-# Database (local Docker PostgreSQL)
+# Database (set to your Postgres instance URI)
 DATABASE_URL=postgresql+asyncpg://nonagon:nonagon@localhost:5432/nonagon
 
 # Discord Bot
@@ -70,6 +68,7 @@ make frontend
 ```
 
 Or run all in parallel:
+
 ```bash
 make dev
 ```
@@ -112,28 +111,24 @@ nonagon/
 │   └── migrations/          # Database migrations
 ├── tests/                   # All tests
 ├── docs/                    # Documentation
-├── docker-compose.yml       # PostgreSQL database only
 ├── pyproject.toml           # Python project config
 └── Makefile
 ```
 
 ## Make Commands
 
-| Command | Description |
-|---------|-------------|
-| `make install` | Install all dependencies (backend + frontend) |
-| `make api` | Start FastAPI/GraphQL server with hot reload |
-| `make bot` | Start Discord bot |
-| `make frontend` | Start Parcel development server |
-| `make dev` | Start all services in parallel |
-| `make db-up` | Start PostgreSQL database (Docker) |
-| `make db-down` | Stop PostgreSQL database |
-| `make db-reset` | Reset database (destroys all data) |
-| `make test` | Run all tests |
-| `make lint` | Run Ruff linter |
-| `make format` | Format code with Ruff |
-| `make generate` | Generate types from JSON Schema |
-| `make clean` | Remove build artifacts and caches |
+| Command         | Description                                   |
+| --------------- | --------------------------------------------- |
+| `make install`  | Install all dependencies (backend + frontend) |
+| `make api`      | Start FastAPI/GraphQL server with hot reload  |
+| `make bot`      | Start Discord bot                             |
+| `make frontend` | Start Parcel development server               |
+| `make dev`      | Start all services in parallel                |
+| `make test`     | Run all tests                                 |
+| `make lint`     | Run Ruff linter                               |
+| `make format`   | Format code with Ruff                         |
+| `make generate` | Generate types from JSON Schema               |
+| `make clean`    | Remove build artifacts and caches             |
 
 ## Development Workflow
 
@@ -146,6 +141,7 @@ make generate
 ```
 
 This generates:
+
 - Python Pydantic models → `backend/api/nonagon_api/generated/`
 - TypeScript types → consider GraphQL codegen or handwritten types under `frontend/src/types/`
 
@@ -162,13 +158,7 @@ pytest -k "quest"            # Tests matching "quest"
 
 - **Python**: Ruff for linting and formatting (tabs for indentation)
 - **TypeScript**: ESLint + Prettier
-- Pre-commit hooks enforce style on commit
-
-```bash
-# Install pre-commit hooks
-pip install pre-commit
-pre-commit install
-```
+- Run `make lint` and `make format` before sending changes
 
 ## Discord Bot Setup
 
@@ -179,6 +169,7 @@ After inviting the bot to a guild:
 3. Use `/setup_reset` to clear settings if needed
 
 Required bot permissions:
+
 - Send Messages
 - Embed Links
 - Add Reactions
@@ -188,6 +179,7 @@ Required bot permissions:
 ## API Documentation
 
 Interactive GraphQL playground is available at:
+
 - GraphQL Playground: [http://localhost:8000/graphql](http://localhost:8000/graphql)
 
 All GraphQL queries/mutations are guild-scoped via the `guildId` parameter.

@@ -30,7 +30,6 @@ dev = [
     "httpx>=0.27",
     "requests>=2.32",
     "ruff>=0.1",
-    "pre-commit>=3.7",
     "datamodel-code-generator>=0.25",
 ]
 

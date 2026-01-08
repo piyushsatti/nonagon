@@ -12,10 +12,10 @@ Nonagon automates quest workflows (announce >> sign‑ups >> roster selection >>
 
 **Style:** Hexagonal (Ports & Adapters) with a thin MVC at the edge.
 
-* **Delivery (Controllers/Views):** Discord Cogs handle commands & events (controllers). UI is built with `discord.ui.View` (buttons/selects/modals) and presenters that render embeds.
-* **Application Layer (Use Cases):** Stateless orchestrators (e.g., `CreateQuest`, `ApplyForQuest`, `SelectRoster`, `SubmitSummary`) that coordinate domain models and repositories.
-* **Domain Layer (Models):** Pure Python dataclasses modeling `User` (+ roles & profiles), `Quest`, and `QuestSummary`. Contains invariants and state transitions.
-* **Adapters (Infra):** Repositories for MongoDB, configuration, and integrations (Discord message IDs linkage). Optional background jobs for projections/analytics.
+- **Delivery (Controllers/Views):** Discord Cogs handle commands & events (controllers). UI is built with `discord.ui.View` (buttons/selects/modals) and presenters that render embeds.
+- **Application Layer (Use Cases):** Stateless orchestrators (e.g., `CreateQuest`, `ApplyForQuest`, `SelectRoster`, `SubmitSummary`) that coordinate domain models and repositories.
+- **Domain Layer (Models):** Pure Python dataclasses modeling `User` (+ roles & profiles), `Quest`, and `QuestSummary`. Contains invariants and state transitions.
+- **Adapters (Infra):** Repositories for MongoDB, configuration, and integrations (Discord message IDs linkage). Optional background jobs for projections/analytics.
 
 ```
 [ Discord (slash cmds, buttons) ]
@@ -31,9 +31,9 @@ Nonagon automates quest workflows (announce >> sign‑ups >> roster selection >>
 
 **Why this shape**
 
-* Domain rules remain framework‑agnostic.
-* UI/Discord specifics live at the edge and can change without touching core logic.
-* Repositories can be swapped (e.g., MongoDB → Postgres) with minimal surface changes.
+- Domain rules remain framework‑agnostic.
+- UI/Discord specifics live at the edge and can change without touching core logic.
+- Repositories can be swapped (e.g., MongoDB → Postgres) with minimal surface changes.
 
 ---
 
@@ -41,9 +41,9 @@ Nonagon automates quest workflows (announce >> sign‑ups >> roster selection >>
 
 ### 3.1 Discord Edge
 
-* **Cogs (Controllers):** Register slash commands/listeners, validate permissions, **defer** within 3s, call use cases, then send/edit messages.
-* **Views (UI):** `discord.ui.View` classes own component callbacks; presenters build embeds.
-* **Rate limiting:** centralized wrapper handles retries/backoff when editing messages.
+- **Cogs (Controllers):** Register slash commands/listeners, validate permissions, **defer** within 3s, call use cases, then send/edit messages.
+- **Views (UI):** `discord.ui.View` classes own component callbacks; presenters build embeds.
+- **Rate limiting:** centralized wrapper handles retries/backoff when editing messages.
 
 #### 3.1.1 Discord Intents
 
@@ -58,23 +58,23 @@ All four intents must be requested in `discord.Intents` during bot startup. The 
 
 ### 3.2 Application (Use Cases)
 
-* One file per action; no framework imports. Examples:
+- One file per action; no framework imports. Examples:
 
-  * `create_quest`, `announce_quest`, `apply_for_quest`, `select_roster`, `mark_completed`
-  * `submit_summary` (DM or player)
-  * `record_message_activity`, `record_event_attendance`
+  - `create_quest`, `announce_quest`, `apply_for_quest`, `select_roster`, `mark_completed`
+  - `submit_summary` (DM or player)
+  - `record_message_activity`, `record_event_attendance`
 
 ### 3.3 Domain (Models)
 
-* **User** with `roles[]` and optional `player`/`referee` profiles.
-* **Quest** with lifecycle (`DRAFT → SIGNUP_OPEN → ROSTER_SELECTED → RUNNING → COMPLETED/CANCELLED`), sign‑ups, roster, waitlist, Discord linkage, telemetry.
-* **QuestSummary** unified with discriminator `kind = player|dm`, visibility policy.
+- **User** with `roles[]` and optional `player`/`referee` profiles.
+- **Quest** with lifecycle (`DRAFT → SIGNUP_OPEN → ROSTER_SELECTED → RUNNING → COMPLETED/CANCELLED`), sign‑ups, roster, waitlist, Discord linkage, telemetry.
+- **QuestSummary** unified with discriminator `kind = player|dm`, visibility policy.
 
 ### 3.4 Adapters (Infra)
 
-* **MongoDB repositories:** implement ports for `UsersRepo`, `QuestsRepo`, `SummariesRepo`.
-* **Config:** environment‑driven (`.env` in dev); no secrets in code.
-* **Background jobs (optional):** projectors to compute analytics/materialized views.
+- **MongoDB repositories:** implement ports for `UsersRepo`, `QuestsRepo`, `SummariesRepo`.
+- **Config:** environment‑driven (`.env` in dev); no secrets in code.
+- **Background jobs (optional):** projectors to compute analytics/materialized views.
 
 ---
 
@@ -103,96 +103,96 @@ All four intents must be requested in `discord.Intents` during bot startup. The 
 
 ### 5.1 Core Entities
 
-* **User**
+- **User**
 
-  * `roles: [member|player|referee|admin]`
-  * `player?: PlayerProfile` (active/retired characters, counters)
-  * `referee?: RefereeProfile` (quests DMed, regions, collaborations)
-  * Engagement telemetry (messages, voice, events).
+  - `roles: [member|player|referee|admin]`
+  - `player?: PlayerProfile` (active/retired characters, counters)
+  - `referee?: RefereeProfile` (quests DMed, regions, collaborations)
+  - Engagement telemetry (messages, voice, events).
 
-* **Quest**
+- **Quest**
 
-  * Identity, meta (`name`, `description`, `tags`, `category`, `region`)
-  * Scheduling (`scheduled_at`, `duration_minutes`, `timezone`)
-  * Capacity (`max_players`, `min_players`, optional level range)
-  * Discord linkage (`guild_id`, `channel_id`, `signup_message_id`, `thread_id`)
-  * Lifecycle timestamps; `signups`, `roster`, `waitlist`
-  * Rewards (`xp_reward`, `gp_reward`), `summary_ids`, `attendees`
+  - Identity, meta (`name`, `description`, `tags`, `category`, `region`)
+  - Scheduling (`scheduled_at`, `duration_minutes`, `timezone`)
+  - Capacity (`max_players`, `min_players`, optional level range)
+  - Discord linkage (`guild_id`, `channel_id`, `signup_message_id`, `thread_id`)
+  - Lifecycle timestamps; `signups`, `roster`, `waitlist`
+  - Rewards (`xp_reward`, `gp_reward`), `summary_ids`, `attendees`
 
-* **QuestSummary** (unified)
+- **QuestSummary** (unified)
 
-  * `summary_id`, `quest_id`, `author_user_id`, `kind`, `summary_text`, `posted_at`
-  * Visibility (`is_private`, `audience_roles`)
+  - `summary_id`, `quest_id`, `author_user_id`, `kind`, `summary_text`, `posted_at`
+  - Visibility (`is_private`, `audience_roles`)
 
 ### 5.2 Modeling Notes
 
-* Prefer **IDs** over object references in maps to avoid cycles; easy serialization.
-* Embed small, tightly‑coupled subdocs (profiles, sign‑ups). Split to collections when they grow or need independent indexing/lifecycle.
+- Prefer **IDs** over object references in maps to avoid cycles; easy serialization.
+- Embed small, tightly‑coupled subdocs (profiles, sign‑ups). Split to collections when they grow or need independent indexing/lifecycle.
 
 ### 5.3 ID Strategy
 
-* All domain IDs (`USER`, `CHAR`, `QUES`, `SUMM`) now use postal-style bodies: `PREFIX` + `L#L#L#` (e.g., `QUESH3X1T7`).
-* MongoDB documents persist IDs under `*.value`; repositories and caches compare against those values instead of `_id` or legacy `.number` fields.
-* Legacy numeric bodies remain parseable for backfilled data, but new records generate postal bodies via `EntityIDModel.generate()`.
-* Demo tooling and command surfaces surface the postal IDs to keep Discord embeds and logs aligned with repository values.
+- All domain IDs (`USER`, `CHAR`, `QUES`, `SUMM`) now use postal-style bodies: `PREFIX` + `L#L#L#` (e.g., `QUESH3X1T7`).
+- MongoDB documents persist IDs under `*.value`; repositories and caches compare against those values instead of `_id` or legacy `.number` fields.
+- Legacy numeric bodies remain parseable for backfilled data, but new records generate postal bodies via `EntityIDModel.generate()`.
+- Demo tooling and command surfaces surface the postal IDs to keep Discord embeds and logs aligned with repository values.
 
 ---
 
 ## 6. Security & Permissions
 
-* **RBAC:** roles derive from `User.roles`. Controllers enforce: only `REFEREE` may create/select, only `PLAYER` may apply, `ADMIN/REFEREE` may read DM summaries.
-* **Visibility:** DM summaries default private; player summaries public unless overridden.
-* **Audit:** record `created_by`, `last_updated_by` on quests; append‑only events for sensitive changes (optional).
+- **RBAC:** roles derive from `User.roles`. Controllers enforce: only `REFEREE` may create/select, only `PLAYER` may apply, `ADMIN/REFEREE` may read DM summaries.
+- **Visibility:** DM summaries default private; player summaries public unless overridden.
+- **Audit:** record `created_by`, `last_updated_by` on quests; append‑only events for sensitive changes (optional).
 
 ---
 
 ## 7. Reliability & Performance
 
-* **Interaction timing:** always reply or **defer** within 3 seconds; then edit/follow‑up.
-* **Rate limits:** centralize message edits with automatic retry/backoff; deduplicate identical edits; prefer bulk updates.
-* **Idempotency:** use deterministic keys (e.g., signup composite `(quest_id, user_id, character_id)`) to prevent double‑apply.
-* **Pagination & caching:** paginate lists (quests, summaries); cache stable lookups (e.g., user profiles) in memory with TTL.
+- **Interaction timing:** always reply or **defer** within 3 seconds; then edit/follow‑up.
+- **Rate limits:** centralize message edits with automatic retry/backoff; deduplicate identical edits; prefer bulk updates.
+- **Idempotency:** use deterministic keys (e.g., signup composite `(quest_id, user_id, character_id)`) to prevent double‑apply.
+- **Pagination & caching:** paginate lists (quests, summaries); cache stable lookups (e.g., user profiles) in memory with TTL.
 
 ---
 
 ## 8. Observability
 
-* **Structured logging** with request/interaction IDs.
-* **Metrics** (per command latency, error rate, rate‑limit hits, sign‑up conversions).
-* **Tracing**: optional OpenTelemetry (spans around use cases and Discord/DB adapters). Export to console in dev; OTLP in prod.
+- **Structured logging** with request/interaction IDs.
+- **Metrics** (per command latency, error rate, rate‑limit hits, sign‑up conversions).
+- **Tracing**: optional OpenTelemetry (spans around use cases and Discord/DB adapters). Export to console in dev; OTLP in prod.
 
 ---
 
 ## 9. Deployment & Config
 
-* **Packaging:** `src/` layout; every package has `__init__.py`.
-* **Configuration:** env vars (e.g., `MONGODB_URI`, `BOT_TOKEN`, `LOG_LEVEL`). Commit only `.env.example`.
-* **Container:** Dockerfile at repo root; `.dockerignore` excludes venv, tests, docs, git.
-* **CI:** GitHub Actions runs `ruff`/`pytest` and optional image build.
+- **Packaging:** `src/` layout; every package has `__init__.py`.
+- **Configuration:** env vars (e.g., `MONGODB_URI`, `BOT_TOKEN`, `LOG_LEVEL`). Commit only `.env.example`.
+- **Container:** Bring your own container or managed Postgres; set `DATABASE_URL` accordingly. No maintained Compose setup in-repo.
+- **CI:** GitHub Actions runs `ruff`/`pytest`.
 
 ---
 
 ## 10. Testing Strategy
 
-* **Unit:** domain models (state transitions), use cases (with in‑memory repos/UoW).
-* **Component:** adapters against a real MongoDB (or Testcontainers/mongomock for fast checks).
-* **E2E (bot):** spin up a test guild or use a stub transport; verify commands and views.
+- **Unit:** domain models (state transitions), use cases (with in‑memory repos/UoW).
+- **Component:** adapters against a real MongoDB (or Testcontainers/mongomock for fast checks).
+- **E2E (bot):** spin up a test guild or use a stub transport; verify commands and views.
 
 ---
 
 ## 11. Extensibility
 
-* Add **analytics projections** (e.g., “quests per referee”, “time‑to‑fill”).
-* New integrations (web dashboard, notifications) arrive as new adapters/ports.
-* Feature flags for experimental flows.
+- Add **analytics projections** (e.g., “quests per referee”, “time‑to‑fill”).
+- New integrations (web dashboard, notifications) arrive as new adapters/ports.
+- Feature flags for experimental flows.
 
 ---
 
 ## 12. Assumptions
 
-* MongoDB Atlas is the primary store; scale via indexes and capped document sizes.
-* Single bot shard initially; can shard later if guild count grows.
-* Discord UI is the only delivery mechanism for now (no public HTTP API).
+- MongoDB Atlas is the primary store; scale via indexes and capped document sizes.
+- Single bot shard initially; can shard later if guild count grows.
+- Discord UI is the only delivery mechanism for now (no public HTTP API).
 
 ---
 
@@ -216,11 +216,11 @@ class SummariesRepo(Protocol):
 
 ## 14. Verification Checklist
 
-* [ ] All commands **defer** within 3s when work > 3s
-* [ ] UI actions live in `discord.ui.View`; controllers are thin
-* [ ] Use cases free of framework imports
-* [ ] MongoDB: embed small/tight data; reference when large/independent
-* [ ] DM summaries private by default; RBAC enforced at controller
-* [ ] Centralized rate‑limit handling for edits
-* [ ] Logs/metrics enabled; traces optional via OpenTelemetry
-* [ ] CI runs lint + tests; Docker ignores dev files
+- [ ] All commands **defer** within 3s when work > 3s
+- [ ] UI actions live in `discord.ui.View`; controllers are thin
+- [ ] Use cases free of framework imports
+- [ ] MongoDB: embed small/tight data; reference when large/independent
+- [ ] DM summaries private by default; RBAC enforced at controller
+- [ ] Centralized rate‑limit handling for edits
+- [ ] Logs/metrics enabled; traces optional via OpenTelemetry
+- [ ] CI runs lint + tests; Docker ignores dev files

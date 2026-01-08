@@ -23,9 +23,6 @@ install-backend: ## Install only backend package
 install-frontend: ## Install only frontend packages
 	cd frontend && npm install
 
-hooks: ## Install pre-commit hooks
-	pre-commit install
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # DEVELOPMENT
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -77,23 +74,6 @@ lint-fix: ## Run linters and fix issues
 
 format: ## Format code
 	ruff format backend/
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# DATABASE (Docker)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-db-up: ## Start PostgreSQL database
-	docker compose up -d postgres
-
-db-down: ## Stop PostgreSQL database
-	docker compose down
-
-db-logs: ## View PostgreSQL logs
-	docker compose logs -f --tail=100 postgres
-
-db-reset: ## Reset database (WARNING: destroys all data)
-	docker compose down -v
-	docker compose up -d postgres
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CI

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Developer bootstrap: install dev dependencies and pre-commit hooks.
+Developer bootstrap: install dev dependencies.
 
 Usage:
 python scripts/dev_setup.py
@@ -19,11 +19,10 @@ def run(cmd: list[str]) -> int:
 def main() -> int:
     code = run([sys.executable, "-m", "pip", "install", "--upgrade", "pip"]) or 0
     code = run([sys.executable, "-m", "pip", "install", "-e", ".[dev]"]) or code
-    code = run([sys.executable, "-m", "pre_commit", "install"]) or code
     if code == 0:
-        print("Pre-commit installed. You can now run 'pre-commit run -a'.")
+        print("Development dependencies installed.")
     else:
-        print("There was an issue installing hooks. Try running 'pip install pre-commit' then 'pre-commit install'.")
+        print("There was an issue installing development dependencies.")
     return code
 
 
