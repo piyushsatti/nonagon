@@ -180,3 +180,9 @@ cython_debug/
 trash/
 .DS_Store
 logs/
+
+# Frontend (Parcel)
+frontend/node_modules/
+frontend/dist/
+frontend/.parcel-cache/
+frontend/package-lock.json
