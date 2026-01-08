@@ -1,5 +1,0 @@
-FROM python:3.13-slim
-WORKDIR /nonagon
-COPY . .
-RUN python -m pip install .
-CMD ["python", "-m", "app.bot.main"]

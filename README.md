@@ -4,84 +4,205 @@ Nonagon is a multi-guild Discord automation platform that streamlines quest sche
 
 ## Tech Stack
 
-- Python 3.11+
-- FastAPI & Uvicorn
-- discord.py
-- MongoDB (Atlas or compatible)
-- Docker & Docker Compose
+| Layer | Technology |
+|-------|------------|
+| API | Python 3.11+, FastAPI, Uvicorn, Motor (async MongoDB) |
+| Bot | Python 3.11+, discord.py, PyMongo |
+| Frontend | Next.js 14, React, TypeScript |
+| Database | MongoDB 7+ |
+| Schemas | JSON Schema (source of truth) |
+| Dev Tools | uv, Ruff, pytest, Docker Compose |
 
-## Getting Started
+## Quick Start
 
 ### Prerequisites
 
-- [Docker](https://docs.docker.com/get-docker/)
-- [Docker Compose](https://docs.docker.com/compose/install/)
+- Python 3.11+
+- Node.js 20+
+- [uv](https://docs.astral.sh/uv/) (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
+- MongoDB 7+ (local or Atlas)
+- Docker & Docker Compose (optional, for containerized runs)
 
-### Configuration
-
-1. Copy the sample environment file (if present) or create a new `.env` at the repository root.
-2. Populate the following variables (mirrors `docker-compose.dev.yml`):
-
-| Variable | Required | Notes |
-|----------|----------|-------|
-| `ATLAS_URI` | Yes | MongoDB connection string shared by both services. |
-| `MONGO_URI` | Optional | Alias used by the bot; defaults to `ATLAS_URI`. |
-| `MONGODB_URI` | Optional | Alias used by the API; defaults to `ATLAS_URI`. |
-| `DB_NAME` | Yes | Logical database name for the API service (e.g., `nonagon`). |
-| `BOT_TOKEN` | Yes | Discord bot token for authenticating the gateway connection. |
-
-### Running the Application
+### 1. Clone & Install
 
 ```bash
-docker compose up --build -d
+git clone https://github.com/your-org/nonagon.git
+cd nonagon
+
+# Backend (creates backend/.venv automatically)
+cd backend
+uv sync --all-extras
+source .venv/bin/activate
+cd ..
+
+# Frontend
+cd frontend
+npm install
+cd ..
 ```
 
-This builds the images, starts the API on port `8000`, and launches the Discord bot.
+### 2. Environment Variables
 
-After inviting the bot to a guild, an administrator should run `/setup` once to create the default Quest Manager role, sign-up channel, and log channel. Use `/setup_status` to review the configuration or `/setup_reset` to clear stored settings if you need to start over.
+Create a `.env` file in the repository root:
 
-### Running Tests
+```dotenv
+# MongoDB
+ATLAS_URI=mongodb://localhost:27017
+DB_NAME=nonagon
 
-Placeholder:
+# Discord Bot
+BOT_TOKEN=your-discord-bot-token
+BOT_CLIENT_ID=your-discord-client-id
+
+# Optional overrides
+MONGO_URI=           # Bot uses this → falls back to ATLAS_URI
+MONGODB_URI=         # API uses this → falls back to ATLAS_URI
+```
+
+### 3. Run Services
+
+**Option A: Make commands (recommended for development)**
 
 ```bash
-docker compose exec api pytest
+make install      # Install all dependencies
+make api          # Start API server (port 8000)
+make bot          # Start Discord bot (separate terminal)
+make frontend     # Start Next.js dev server (port 3000)
 ```
 
-Adjust the command once the test harness is finalized (e.g., split domain vs. integration suites).
+**Option B: Docker Compose (production-like)**
+
+```bash
+docker compose up --build
+```
+
+### 4. Verify Installation
+
+- API docs: [http://localhost:8000/docs](http://localhost:8000/docs)
+- Frontend: [http://localhost:3000](http://localhost:3000)
+- Health check: `curl http://localhost:8000/health`
 
 ## Project Structure
 
-- `src/app/api` — FastAPI application exposing REST endpoints, demo dashboards, and background tasks.
-- `src/app/bot` — Discord bot entrypoint, cogs, services, and infrastructure adapters.
-- `docs/` — Architecture notes, product requirements, API/command references.
+```
+nonagon/
+├── backend/
+│   ├── pyproject.toml       # Single config for all backend packages
+│   ├── .venv/               # Python virtual environment
+│   ├── core/                # Shared domain & infrastructure
+│   │   └── nonagon_core/
+│   │       ├── domain/      # Models, entities, use cases
+│   │       └── infra/       # Database, repositories, serialization
+│   ├── api/                 # FastAPI service
+│   │   └── nonagon_api/
+│   │       ├── routers/     # REST endpoints
+│   │       ├── schemas.py   # Pydantic request/response models
+│   │       └── mappers.py   # Domain ↔ API transformations
+│   └── bot/                 # Discord bot
+│       └── nonagon_bot/
+│           ├── cogs/        # Command groups
+│           ├── services/    # Business logic
+│           └── utils/       # Helpers, embeds
+├── frontend/
+│   ├── package.json
+│   ├── node_modules/
+│   └── src/
+│       ├── app/             # Next.js App Router pages
+│       ├── api/             # API client
+│       └── types/generated/ # TypeScript types from JSON Schema
+├── shared/
+│   └── schemas/             # JSON Schema (source of truth)
+│       ├── common.schema.json
+│       ├── quest.schema.json
+│       └── ...
+├── scripts/
+│   ├── generate-types.sh    # Generate Pydantic + TS types
+│   └── validate-schemas.sh  # Validate JSON Schema files
+├── tests/                   # All tests
+├── docs/                    # Documentation
+├── docker-compose.yml
+└── Makefile
+```
+
+## Make Commands
+
+| Command | Description |
+|---------|-------------|
+| `make install` | Install all dependencies (backend + frontend) |
+| `make api` | Start FastAPI server with hot reload |
+| `make bot` | Start Discord bot |
+| `make frontend` | Start Next.js development server |
+| `make test` | Run all tests |
+| `make lint` | Run Ruff linter |
+| `make format` | Format code with Ruff |
+| `make generate` | Generate types from JSON Schema |
+| `make validate-schemas` | Validate JSON Schema files |
+| `make docker-up` | Start all services via Docker Compose |
+| `make docker-down` | Stop Docker Compose services |
+| `make clean` | Remove build artifacts and caches |
+
+## Development Workflow
+
+### Type Generation
+
+JSON Schema files in `shared/schemas/` are the source of truth. Generate types after schema changes:
+
+```bash
+make generate
+```
+
+This generates:
+- Python Pydantic models → `backend/api/nonagon_api/generated/`
+- TypeScript types → `frontend/src/types/generated/`
+
+### Running Tests
+
+```bash
+make test                    # All tests
+pytest tests/domain/         # Domain tests only
+pytest tests/api/            # API tests only
+pytest -k "quest"            # Tests matching "quest"
+```
+
+### Code Style
+
+- **Python**: Ruff for linting and formatting (tabs for indentation)
+- **TypeScript**: ESLint + Prettier
+- Pre-commit hooks enforce style on commit
+
+```bash
+# Install pre-commit hooks
+pip install pre-commit
+pre-commit install
+```
+
+## Discord Bot Setup
+
+After inviting the bot to a guild:
+
+1. Run `/setup` to create default roles and channels
+2. Use `/setup_status` to verify configuration
+3. Use `/setup_reset` to clear settings if needed
+
+Required bot permissions:
+- Send Messages
+- Embed Links
+- Add Reactions
+- Manage Roles (for Quest Manager role)
+- Read Message History
 
 ## API Documentation
 
-- FastAPI auto-generated docs: [http://localhost:8000/docs](http://localhost:8000/docs)
+Interactive API docs are available at:
+- Swagger UI: [http://localhost:8000/docs](http://localhost:8000/docs)
+- ReDoc: [http://localhost:8000/redoc](http://localhost:8000/redoc)
+
+All API routes are guild-scoped: `/v1/guilds/{guild_id}/...`
 
 ## Contributing
 
-Contributions are welcome! Please open an issue or submit a pull request once contribution guidelines are defined.
-
-### Indentation Policy (Strict Tabs)
-
-- Python source files must use tabs for leading indentation (no spaces). Mixing tabs and spaces is rejected.
-- Configuration formats that commonly expect spaces (YAML/JSON/TOML) use 2 spaces.
-- This is enforced via `.editorconfig`, Ruff (no W191, but E101 enabled), and a pre-commit hook.
-
-Setup pre-commit hooks:
-
-```bash
-pip install pre-commit
-pre-commit install
-pre-commit run -a
-```
-
-Notes:
-- Disable Python format-on-save that converts tabs to spaces. VS Code settings are included in `.vscode/settings.json`.
-- Black is not used to avoid conflicts with the tab policy. Ruff is configured for linting.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines, code style, and PR process.
 
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the MIT License - see [LICENSE](LICENSE) for details.

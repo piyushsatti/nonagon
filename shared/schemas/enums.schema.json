@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "enums.schema.json",
+  "title": "Enumerations",
+  "description": "All enumeration types used across the Nonagon system",
+  "definitions": {
+    "Role": {
+      "type": "string",
+      "enum": ["MEMBER", "PLAYER", "REFEREE"],
+      "description": "User roles within a guild"
+    },
+    "QuestState": {
+      "type": "string",
+      "enum": ["DRAFT", "OPEN", "IN_PROGRESS", "COMPLETED", "CANCELLED"],
+      "description": "Quest lifecycle states"
+    },
+    "CharacterStatus": {
+      "type": "string",
+      "enum": ["ACTIVE", "RETIRED"],
+      "description": "Character availability status"
+    },
+    "SignUpStatus": {
+      "type": "string",
+      "enum": ["PENDING", "ACCEPTED"],
+      "description": "Player signup status for a quest"
+    },
+    "SummaryStatus": {
+      "type": "string",
+      "enum": ["DRAFT", "PUBLISHED"],
+      "description": "Quest summary publication status"
+    },
+    "AuthorType": {
+      "type": "string",
+      "enum": ["PLAYER", "REFEREE"],
+      "description": "Type of summary author"
+    }
+  }
+}

@@ -1,0 +1,124 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "quest.schema.json",
+  "title": "Quest Schema",
+  "description": "Quest entity and related objects",
+  "definitions": {
+    "PlayerSignUp": {
+      "type": "object",
+      "description": "Player signup for a quest",
+      "properties": {
+        "user_id": {
+          "$ref": "common.schema.json#/definitions/UserID",
+          "description": "User signing up"
+        },
+        "character_id": {
+          "$ref": "common.schema.json#/definitions/CharacterID",
+          "description": "Character for the quest"
+        },
+        "status": {
+          "$ref": "enums.schema.json#/definitions/SignUpStatus",
+          "description": "Signup status"
+        }
+      },
+      "required": ["user_id", "character_id", "status"]
+    },
+    "Quest": {
+      "type": "object",
+      "description": "Main quest entity",
+      "properties": {
+        "quest_id": {
+          "$ref": "common.schema.json#/definitions/QuestID",
+          "description": "Unique quest identifier"
+        },
+        "guild_id": {
+          "$ref": "common.schema.json#/definitions/DiscordSnowflake",
+          "description": "Discord guild this quest belongs to"
+        },
+        "referee_id": {
+          "$ref": "common.schema.json#/definitions/UserID",
+          "description": "User ID of the hosting referee"
+        },
+        "channel_id": {
+          "oneOf": [
+            { "$ref": "common.schema.json#/definitions/DiscordSnowflake" },
+            { "type": "null" }
+          ],
+          "description": "Discord channel for the quest"
+        },
+        "message_id": {
+          "oneOf": [
+            { "$ref": "common.schema.json#/definitions/DiscordSnowflake" },
+            { "type": "null" }
+          ],
+          "description": "Discord message ID for quest embed"
+        },
+        "title": {
+          "$ref": "common.schema.json#/definitions/NullableString",
+          "description": "Quest title"
+        },
+        "description": {
+          "$ref": "common.schema.json#/definitions/NullableString",
+          "description": "Quest description"
+        },
+        "scheduled_start": {
+          "$ref": "common.schema.json#/definitions/NullableDateTime",
+          "description": "Scheduled start time"
+        },
+        "duration_hours": {
+          "oneOf": [
+            { "type": "integer", "minimum": 0 },
+            { "type": "null" }
+          ],
+          "description": "Expected duration in hours"
+        },
+        "image_url": {
+          "$ref": "common.schema.json#/definitions/NullableURL",
+          "description": "Cover image URL"
+        },
+        "linked_quests": {
+          "type": "array",
+          "items": { "$ref": "common.schema.json#/definitions/QuestID" },
+          "description": "Related quest IDs"
+        },
+        "linked_summaries": {
+          "type": "array",
+          "items": { "$ref": "common.schema.json#/definitions/SummaryID" },
+          "description": "Related summary IDs"
+        },
+        "state": {
+          "$ref": "enums.schema.json#/definitions/QuestState",
+          "description": "Current lifecycle state"
+        },
+        "open_at": {
+          "$ref": "common.schema.json#/definitions/NullableDateTime",
+          "description": "When quest was opened for signups"
+        },
+        "started_at": {
+          "$ref": "common.schema.json#/definitions/NullableDateTime",
+          "description": "When quest actually started"
+        },
+        "ended_at": {
+          "$ref": "common.schema.json#/definitions/NullableDateTime",
+          "description": "When quest ended"
+        },
+        "signups": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/PlayerSignUp" },
+          "description": "List of player signups"
+        },
+        "signup_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total number of signups"
+        },
+        "accepted_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of accepted signups"
+        }
+      },
+      "required": ["quest_id", "guild_id", "referee_id", "state", "signups", "linked_quests", "linked_summaries"]
+    }
+  }
+}

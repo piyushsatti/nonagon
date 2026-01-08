@@ -1,0 +1,206 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "user.schema.json",
+  "title": "User Schema",
+  "description": "User entity and related embedded objects",
+  "definitions": {
+    "PlayedWithStats": {
+      "type": "object",
+      "description": "Statistics for playing with another character",
+      "properties": {
+        "frequency": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of times played together"
+        },
+        "hours": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Total hours played together"
+        }
+      },
+      "required": ["frequency", "hours"]
+    },
+    "CollabStats": {
+      "type": "object",
+      "description": "Collaboration statistics with another user",
+      "properties": {
+        "frequency": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of collaborations"
+        },
+        "hours": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Total hours collaborated"
+        }
+      },
+      "required": ["frequency", "hours"]
+    },
+    "Player": {
+      "type": "object",
+      "description": "Player profile embedded in User",
+      "properties": {
+        "characters": {
+          "type": "array",
+          "items": { "$ref": "common.schema.json#/definitions/CharacterID" },
+          "description": "List of character IDs owned by player"
+        },
+        "became_player_at": {
+          "$ref": "common.schema.json#/definitions/NullableDateTime",
+          "description": "When user became a player"
+        },
+        "first_character_at": {
+          "$ref": "common.schema.json#/definitions/NullableDateTime",
+          "description": "When first character was created"
+        },
+        "last_played_at": {
+          "$ref": "common.schema.json#/definitions/NullableDateTime",
+          "description": "Last play session timestamp"
+        },
+        "quests_applied": {
+          "type": "array",
+          "items": { "$ref": "common.schema.json#/definitions/QuestID" },
+          "description": "Quest IDs applied to"
+        },
+        "quests_played": {
+          "type": "array",
+          "items": { "$ref": "common.schema.json#/definitions/QuestID" },
+          "description": "Quest IDs completed"
+        },
+        "summaries_written": {
+          "type": "array",
+          "items": { "$ref": "common.schema.json#/definitions/SummaryID" },
+          "description": "Summary IDs authored as player"
+        },
+        "played_with_character": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/definitions/PlayedWithStats" },
+          "description": "Map of CharacterID to play statistics"
+        }
+      },
+      "required": ["characters", "quests_applied", "quests_played", "summaries_written"]
+    },
+    "Referee": {
+      "type": "object",
+      "description": "Referee profile embedded in User",
+      "properties": {
+        "quests_hosted": {
+          "type": "array",
+          "items": { "$ref": "common.schema.json#/definitions/QuestID" },
+          "description": "Quest IDs hosted as referee"
+        },
+        "summaries_written": {
+          "type": "array",
+          "items": { "$ref": "common.schema.json#/definitions/SummaryID" },
+          "description": "Summary IDs authored as referee"
+        },
+        "first_dm_at": {
+          "$ref": "common.schema.json#/definitions/NullableDateTime",
+          "description": "First DM session timestamp"
+        },
+        "last_dm_at": {
+          "$ref": "common.schema.json#/definitions/NullableDateTime",
+          "description": "Last DM session timestamp"
+        },
+        "collabed_with": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/definitions/CollabStats" },
+          "description": "Map of UserID to collaboration statistics"
+        },
+        "hosted_for": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 },
+          "description": "Map of UserID to times hosted for"
+        }
+      },
+      "required": ["quests_hosted", "summaries_written"]
+    },
+    "User": {
+      "type": "object",
+      "description": "Main user entity",
+      "properties": {
+        "user_id": {
+          "$ref": "common.schema.json#/definitions/UserID",
+          "description": "Unique user identifier"
+        },
+        "guild_id": {
+          "$ref": "common.schema.json#/definitions/DiscordSnowflake",
+          "description": "Discord guild this user belongs to"
+        },
+        "discord_id": {
+          "oneOf": [
+            { "$ref": "common.schema.json#/definitions/DiscordSnowflake" },
+            { "type": "null" }
+          ],
+          "description": "Discord user snowflake ID"
+        },
+        "roles": {
+          "type": "array",
+          "items": { "$ref": "enums.schema.json#/definitions/Role" },
+          "description": "User roles"
+        },
+        "is_tagged": {
+          "type": "boolean",
+          "description": "Whether user has server tag"
+        },
+        "allow_dm": {
+          "type": "boolean",
+          "description": "Whether user allows DM notifications"
+        },
+        "joined_at": {
+          "$ref": "common.schema.json#/definitions/NullableDateTime",
+          "description": "When user joined"
+        },
+        "last_active_at": {
+          "$ref": "common.schema.json#/definitions/NullableDateTime",
+          "description": "Last activity timestamp"
+        },
+        "messages_count_total": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total messages sent"
+        },
+        "messages_count_week": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Messages sent this week"
+        },
+        "voice_minutes_total": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total voice minutes"
+        },
+        "reactions_count_total": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total reactions given"
+        },
+        "is_player": {
+          "type": "boolean",
+          "description": "Whether user has player role"
+        },
+        "is_referee": {
+          "type": "boolean",
+          "description": "Whether user has referee role"
+        },
+        "player": {
+          "oneOf": [
+            { "$ref": "#/definitions/Player" },
+            { "type": "null" }
+          ],
+          "description": "Player profile if user is a player"
+        },
+        "referee": {
+          "oneOf": [
+            { "$ref": "#/definitions/Referee" },
+            { "type": "null" }
+          ],
+          "description": "Referee profile if user is a referee"
+        }
+      },
+      "required": ["user_id", "guild_id", "roles", "is_player", "is_referee"]
+    }
+  }
+}

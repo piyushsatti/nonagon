@@ -1,0 +1,109 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "summary.schema.json",
+  "title": "Quest Summary Schema",
+  "description": "Quest summary entity",
+  "definitions": {
+    "QuestSummary": {
+      "type": "object",
+      "description": "Quest summary/write-up entity",
+      "properties": {
+        "summary_id": {
+          "$ref": "common.schema.json#/definitions/SummaryID",
+          "description": "Unique summary identifier"
+        },
+        "guild_id": {
+          "$ref": "common.schema.json#/definitions/DiscordSnowflake",
+          "description": "Discord guild this summary belongs to"
+        },
+        "author_type": {
+          "$ref": "enums.schema.json#/definitions/AuthorType",
+          "description": "Whether author is player or referee"
+        },
+        "author_id": {
+          "oneOf": [
+            { "$ref": "common.schema.json#/definitions/UserID" },
+            { "type": "null" }
+          ],
+          "description": "User ID of the author"
+        },
+        "character_id": {
+          "oneOf": [
+            { "$ref": "common.schema.json#/definitions/CharacterID" },
+            { "type": "null" }
+          ],
+          "description": "Character ID if author is a player"
+        },
+        "quest_id": {
+          "oneOf": [
+            { "$ref": "common.schema.json#/definitions/QuestID" },
+            { "type": "null" }
+          ],
+          "description": "Related quest ID"
+        },
+        "title": {
+          "$ref": "common.schema.json#/definitions/NullableString",
+          "description": "Summary title"
+        },
+        "content": {
+          "$ref": "common.schema.json#/definitions/NullableString",
+          "description": "Summary content (markdown)"
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/definitions/ISODateTime",
+          "description": "Creation timestamp"
+        },
+        "edited_at": {
+          "$ref": "common.schema.json#/definitions/NullableDateTime",
+          "description": "Last edit timestamp"
+        },
+        "players": {
+          "type": "array",
+          "items": { "$ref": "common.schema.json#/definitions/UserID" },
+          "description": "Participating player user IDs"
+        },
+        "characters": {
+          "type": "array",
+          "items": { "$ref": "common.schema.json#/definitions/CharacterID" },
+          "description": "Participating character IDs"
+        },
+        "linked_quests": {
+          "type": "array",
+          "items": { "$ref": "common.schema.json#/definitions/QuestID" },
+          "description": "Related quest IDs"
+        },
+        "linked_summaries": {
+          "type": "array",
+          "items": { "$ref": "common.schema.json#/definitions/SummaryID" },
+          "description": "Related summary IDs"
+        },
+        "channel_id": {
+          "oneOf": [
+            { "$ref": "common.schema.json#/definitions/DiscordSnowflake" },
+            { "type": "null" }
+          ],
+          "description": "Discord channel ID"
+        },
+        "message_id": {
+          "oneOf": [
+            { "$ref": "common.schema.json#/definitions/DiscordSnowflake" },
+            { "type": "null" }
+          ],
+          "description": "Discord message ID"
+        },
+        "thread_id": {
+          "oneOf": [
+            { "$ref": "common.schema.json#/definitions/DiscordSnowflake" },
+            { "type": "null" }
+          ],
+          "description": "Discord thread ID"
+        },
+        "status": {
+          "$ref": "enums.schema.json#/definitions/SummaryStatus",
+          "description": "Publication status"
+        }
+      },
+      "required": ["summary_id", "guild_id", "author_type", "created_at", "status", "players", "characters", "linked_quests", "linked_summaries"]
+    }
+  }
+}

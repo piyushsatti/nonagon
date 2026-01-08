@@ -1,0 +1,122 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "character.schema.json",
+  "title": "Character Schema",
+  "description": "Character entity",
+  "definitions": {
+    "Character": {
+      "type": "object",
+      "description": "Player character entity",
+      "properties": {
+        "character_id": {
+          "$ref": "common.schema.json#/definitions/CharacterID",
+          "description": "Unique character identifier"
+        },
+        "owner_id": {
+          "$ref": "common.schema.json#/definitions/UserID",
+          "description": "User ID of the owning player"
+        },
+        "guild_id": {
+          "oneOf": [
+            { "$ref": "common.schema.json#/definitions/DiscordSnowflake" },
+            { "type": "null" }
+          ],
+          "description": "Discord guild this character belongs to"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Character name"
+        },
+        "sheet_url": {
+          "$ref": "common.schema.json#/definitions/URL",
+          "description": "D&D Beyond character sheet URL"
+        },
+        "thread_url": {
+          "$ref": "common.schema.json#/definitions/URL",
+          "description": "Character thread URL"
+        },
+        "token_url": {
+          "$ref": "common.schema.json#/definitions/URL",
+          "description": "Character token image URL"
+        },
+        "art_url": {
+          "$ref": "common.schema.json#/definitions/URL",
+          "description": "Character art URL"
+        },
+        "status": {
+          "$ref": "enums.schema.json#/definitions/CharacterStatus",
+          "description": "Character status (ACTIVE or RETIRED)"
+        },
+        "channel_id": {
+          "oneOf": [
+            { "$ref": "common.schema.json#/definitions/DiscordSnowflake" },
+            { "type": "null" }
+          ],
+          "description": "Discord channel ID"
+        },
+        "message_id": {
+          "oneOf": [
+            { "$ref": "common.schema.json#/definitions/DiscordSnowflake" },
+            { "type": "null" }
+          ],
+          "description": "Discord message ID"
+        },
+        "thread_id": {
+          "oneOf": [
+            { "$ref": "common.schema.json#/definitions/DiscordSnowflake" },
+            { "type": "null" }
+          ],
+          "description": "Discord thread ID"
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/definitions/NullableDateTime",
+          "description": "Character creation timestamp"
+        },
+        "last_played_at": {
+          "$ref": "common.schema.json#/definitions/NullableDateTime",
+          "description": "Last quest played timestamp"
+        },
+        "quests_played_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of quests played"
+        },
+        "summaries_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of summaries written"
+        },
+        "description": {
+          "$ref": "common.schema.json#/definitions/NullableString",
+          "description": "Character description/backstory"
+        },
+        "notes": {
+          "$ref": "common.schema.json#/definitions/NullableString",
+          "description": "Private notes (staff-only)"
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Custom tags"
+        },
+        "played_with": {
+          "type": "array",
+          "items": { "$ref": "common.schema.json#/definitions/CharacterID" },
+          "description": "Other characters played with"
+        },
+        "played_in": {
+          "type": "array",
+          "items": { "$ref": "common.schema.json#/definitions/QuestID" },
+          "description": "Quest history"
+        },
+        "mentioned_in": {
+          "type": "array",
+          "items": { "$ref": "common.schema.json#/definitions/SummaryID" },
+          "description": "Summaries mentioning this character"
+        }
+      },
+      "required": ["character_id", "owner_id", "name", "sheet_url", "thread_url", "token_url", "art_url", "status"]
+    }
+  }
+}
