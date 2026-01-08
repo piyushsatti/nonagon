@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from app.bot.utils.quest_embeds import QuestEmbedData, QuestEmbedRoster, build_quest_embed
-from app.domain.models.QuestModel import QuestStatus
+from nonagon_bot.utils.quest_embeds import QuestEmbedData, QuestEmbedRoster, build_quest_embed
+from nonagon_bot.core.domain.models.QuestModel import QuestStatus
 
 
 def test_build_quest_embed_uses_emoji_headers() -> None:

@@ -67,6 +67,11 @@ def close_connection():
         _db_connection = None
 
 
+# Compatibility shim: db_client is kept for API compatibility
+# The new guild_adapter functions manage their own connections
+db_client = None
+
+
 # Initialize connection on import
 try:
     ping_database()

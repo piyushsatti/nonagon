@@ -1,8 +1,8 @@
 import pytest
 from datetime import datetime
 
-from app.domain.models.EntityIDModel import UserID, QuestID, CharacterID, SummaryID
-from app.domain.models.UserModel import User, Player, Referee, Role
+from nonagon_bot.core.domain.models.EntityIDModel import UserID, QuestID, CharacterID, SummaryID
+from nonagon_bot.core.domain.models.UserModel import User, Player, Referee, Role
 
 @pytest.fixture
 def now():

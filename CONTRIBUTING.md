@@ -121,7 +121,7 @@ pytest --cov                 # With coverage
 
 - Place tests in the appropriate `tests/` subdirectory
 - Use `pytest` fixtures for setup/teardown
-- Mock external dependencies (Discord API, MongoDB)
+- Mock external dependencies (Discord API, PostgreSQL)
 - Aim for >80% coverage on new code
 
 ```python
@@ -212,8 +212,8 @@ tests/
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   Frontend  │────▶│     API     │────▶│   MongoDB   │
-│  (Next.js)  │     │  (FastAPI)  │     │             │
+│   Frontend  │────▶│     API     │────▶│  PostgreSQL │
+│   (React)   │     │  (FastAPI)  │     │             │
 └─────────────┘     └─────────────┘     └──────┬──────┘
                                                │
                     ┌─────────────┐             │
@@ -232,7 +232,7 @@ nonagon_api    nonagon_bot
 ```
 
 - `nonagon_core`: Shared domain models, entities, repositories
-- `nonagon_api`: FastAPI service, REST endpoints
+- `nonagon_api`: FastAPI service, GraphQL endpoints
 - `nonagon_bot`: Discord bot, cogs, commands
 
 ### Key Conventions
@@ -240,21 +240,21 @@ nonagon_api    nonagon_bot
 1. **Guild Scoping**: All persistent models require `guild_id`
 2. **Entity IDs**: Use `EntityIDModel` subclasses (`UserID`, `QuestID`, etc.)
 3. **Validation**: Call `validate_*` methods before persisting
-4. **Async**: API uses Motor (async), bot uses PyMongo for sync flush
+4. **Async**: API uses SQLAlchemy async, bot uses psycopg2 for sync flush
 
 ### Adding New Features
 
 1. **Domain Model**: Add/modify in `nonagon_core/domain/models/`
-2. **Repository**: Add/modify in `nonagon_core/infra/mongo/`
-3. **API Endpoint**: Add router in `nonagon_api/routers/`
+2. **Repository**: Add/modify in `nonagon_core/infra/postgres/`
+3. **API Endpoint**: Add resolver in `nonagon_api/graphql/resolvers.py`
 4. **Bot Command**: Add cog in `nonagon_bot/cogs/`
-5. **Schema**: Update JSON Schema in `shared/schemas/` and run `make generate`
+5. **API Contracts**: Use the GraphQL schema as the source of truth; no JSON Schema codegen.
 
 ## JSON Schema Workflow
 
 JSON Schema files are the source of truth for data contracts:
 
-1. Edit schema in `shared/schemas/`
+1. Update GraphQL schema/types/resolvers as needed
 2. Validate: `make validate-schemas`
 3. Generate types: `make generate`
 4. Update any manual Pydantic models if needed

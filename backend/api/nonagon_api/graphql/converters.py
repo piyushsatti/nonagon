@@ -4,15 +4,15 @@ Converters between domain models and GraphQL types.
 """
 from __future__ import annotations
 
-from nonagon_core.domain.models.CharacterModel import Character as DCharacter
-from nonagon_core.domain.models.CharacterModel import CharacterRole
-from nonagon_core.domain.models.LookupModel import LookupEntry as DLookupEntry
-from nonagon_core.domain.models.QuestModel import PlayerStatus, Quest as DQuest
-from nonagon_core.domain.models.QuestModel import QuestStatus as DQuestStatus
-from nonagon_core.domain.models.SummaryModel import QuestSummary as DSummary
-from nonagon_core.domain.models.SummaryModel import SummaryKind as DSummaryKind
-from nonagon_core.domain.models.SummaryModel import SummaryStatus as DSummaryStatus
-from nonagon_core.domain.models.UserModel import User as DUser
+from nonagon_bot.core.domain.models.CharacterModel import Character as DCharacter
+from nonagon_bot.core.domain.models.CharacterModel import CharacterRole
+from nonagon_bot.core.domain.models.LookupModel import LookupEntry as DLookupEntry
+from nonagon_bot.core.domain.models.QuestModel import PlayerStatus, Quest as DQuest
+from nonagon_bot.core.domain.models.QuestModel import QuestStatus as DQuestStatus
+from nonagon_bot.core.domain.models.SummaryModel import QuestSummary as DSummary
+from nonagon_bot.core.domain.models.SummaryModel import SummaryKind as DSummaryKind
+from nonagon_bot.core.domain.models.SummaryModel import SummaryStatus as DSummaryStatus
+from nonagon_bot.core.domain.models.UserModel import User as DUser
 
 from nonagon_api.graphql.types import (
     Character,

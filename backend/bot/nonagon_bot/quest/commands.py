@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, List, Optional
 
 import discord
 from nonagon_bot.cogs._staff_utils import is_allowed_staff
-from nonagon_core.domain.models.EntityIDModel import QuestID
-from nonagon_core.domain.models.QuestModel import PlayerStatus, QuestStatus
+from nonagon_bot.core.domain.models.EntityIDModel import QuestID
+from nonagon_bot.core.domain.models.QuestModel import PlayerStatus, QuestStatus
 
 from .sessions import (
     QuestAnnounceView,

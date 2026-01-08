@@ -12,11 +12,22 @@ from discord.ext import commands
 
 from nonagon_bot.services import guild_settings_store
 from nonagon_bot.utils.logging import get_logger
-from nonagon_core.domain.models.EntityIDModel import CharacterID, QuestID, SummaryID, UserID
-from nonagon_core.domain.models.SummaryModel import QuestSummary, SummaryKind, SummaryStatus
-from nonagon_core.domain.models.UserModel import User
-from nonagon_core.infra.mongo.users_repo import UsersRepoMongo
-from nonagon_core.infra.serialization import to_bson
+from nonagon_bot.core.domain.models.EntityIDModel import (
+    CharacterID,
+    QuestID,
+    SummaryID,
+    UserID,
+)
+from nonagon_bot.core.domain.models.SummaryModel import (
+    QuestSummary,
+    SummaryKind,
+    SummaryStatus,
+)
+from nonagon_bot.core.domain.models.UserModel import User
+from nonagon_bot.core.infra.postgres.users_repo import UsersRepoPostgres
+from nonagon_bot.core.infra.postgres.summaries_repo import SummariesRepoPostgres
+from nonagon_bot.core.infra.postgres.characters_repo import CharactersRepoPostgres
+from nonagon_bot.core.infra.postgres.guild_adapter import upsert_summary_sync
 
 
 logger = get_logger(__name__)
@@ -31,57 +42,36 @@ class SummaryCommandsCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
-        self._users_repo = UsersRepoMongo()
+        self._users_repo = UsersRepoPostgres()
+        self._summaries_repo = SummariesRepoPostgres()
+        self._characters_repo = CharactersRepoPostgres()
         self._active_summary_sessions: Set[int] = set()
         self._demo_log = logger.audit
 
     # ---------- Core helpers ----------
 
-    async def _ensure_guild_cache(self, guild: discord.Guild) -> None:
-        if guild.id not in self.bot.guild_data:
-            await self.bot.load_or_create_guild_cache(guild)
-
-    def _lookup_user_display(self, guild_id: int, user_id: Optional[UserID]) -> str:
+    async def _lookup_user_display(
+        self, guild_id: int, user_id: Optional[UserID]
+    ) -> str:
+        """Look up user display name from database."""
         if user_id is None:
             return "Unknown"
-        guild_entry = self.bot.guild_data.get(guild_id)
-        if not guild_entry:
-            return str(user_id)
-        users = guild_entry.get("users", {})
-        for cached in users.values():
-            try:
-                if cached.user_id == user_id:
-                    if cached.discord_id:
-                        return f"<@{cached.discord_id}>"
-                    return str(cached.user_id)
-            except AttributeError:
-                continue
+        try:
+            user = await self._users_repo.get(guild_id, str(user_id))
+            if user and user.discord_id:
+                return f"<@{user.discord_id}>"
+        except Exception:
+            pass
         return str(user_id)
 
     async def _get_cached_user(self, member: discord.Member) -> User:
-        await self._ensure_guild_cache(member.guild)
-        guild_entry = self.bot.guild_data[member.guild.id]
+        """Get user from database via UserRegistry."""
+        from nonagon_bot.services.user_registry import UserRegistry
 
-        user = guild_entry["users"].get(member.id)
-        if user is not None:
-            return user
-
-        listener: Optional[commands.Cog] = self.bot.get_cog("ListnerCog")
-        if listener is None:
-            raise RuntimeError("Listener cog not loaded; cannot resolve users.")
-
-        ensure_method = getattr(listener, "_ensure_cached_user", None)
-        if ensure_method is None:
-            raise RuntimeError("Listener cog missing _ensure_cached_user helper.")
-
-        user = await ensure_method(member)  # type: ignore[misc]
+        registry = UserRegistry()
+        user = await registry.ensure_member(member, member.guild.id)
+        user.guild_id = member.guild.id
         return user
-
-    def _summary_to_doc(self, summary: QuestSummary) -> dict:
-        payload = to_bson(summary)
-        payload["summary_id"] = {"value": str(summary.summary_id)}
-        payload["guild_id"] = int(summary.guild_id)
-        return payload
 
     def _parse_entity_id(self, cls, payload: object) -> Optional[object]:
         if payload is None:
@@ -102,102 +92,22 @@ class SummaryCommandsCog(commands.Cog):
             return cls.parse(f"{cls.prefix}{payload}")
         return None
 
-    def _summary_from_doc(self, guild_id: int, doc: dict) -> QuestSummary:
-        summary_id = self._parse_entity_id(SummaryID, doc.get("summary_id")) or SummaryID.parse(
-            str(doc.get("_id"))
-        )
-        kind_payload = doc.get("kind") or SummaryKind.PLAYER
-        try:
-            kind = kind_payload if isinstance(kind_payload, SummaryKind) else SummaryKind(kind_payload)
-        except ValueError:
-            kind = SummaryKind.PLAYER
-
-        summary = QuestSummary(
-            summary_id=summary_id,
-            kind=kind,
-            author_id=self._parse_entity_id(UserID, doc.get("author_id")),
-            character_id=self._parse_entity_id(CharacterID, doc.get("character_id")),
-            quest_id=self._parse_entity_id(QuestID, doc.get("quest_id")),
-            guild_id=int(doc.get("guild_id", guild_id)),
-            raw=doc.get("raw"),
-            title=doc.get("title"),
-            description=doc.get("description"),
-            created_on=doc.get("created_on") or datetime.now(timezone.utc),
-        )
-
-        summary.last_edited_at = doc.get("last_edited_at")
-        summary.players = [
-            self._parse_entity_id(UserID, entry)
-            for entry in doc.get("players", [])
-            if self._parse_entity_id(UserID, entry) is not None
-        ]
-        summary.characters = [
-            self._parse_entity_id(CharacterID, entry)
-            for entry in doc.get("characters", [])
-            if self._parse_entity_id(CharacterID, entry) is not None
-        ]
-        summary.linked_quests = [
-            self._parse_entity_id(QuestID, entry)
-            for entry in doc.get("linked_quests", [])
-            if self._parse_entity_id(QuestID, entry) is not None
-        ]
-        summary.linked_summaries = [
-            self._parse_entity_id(SummaryID, entry)
-            for entry in doc.get("linked_summaries", [])
-            if self._parse_entity_id(SummaryID, entry) is not None
-        ]
-
-        summary.channel_id = doc.get("channel_id")
-        summary.message_id = doc.get("message_id")
-        summary.thread_id = doc.get("thread_id")
-
-        status_raw = doc.get("status")
-        if status_raw:
-            try:
-                summary.status = status_raw if isinstance(status_raw, SummaryStatus) else SummaryStatus(status_raw)
-            except ValueError:
-                summary.status = SummaryStatus.POSTED
-
-        return summary
-
     def _persist_summary(self, guild_id: int, summary: QuestSummary) -> None:
+        """Persist a summary using the sync adapter."""
         summary.guild_id = guild_id
-        guild_entry = self.bot.guild_data[guild_id]
-        db = guild_entry["db"]
-        payload = self._summary_to_doc(summary)
-        db["summaries"].update_one(
-            {"guild_id": guild_id, "summary_id.value": str(summary.summary_id)},
-            {"$set": payload},
-            upsert=True,
-        )
+        upsert_summary_sync(guild_id, summary)
 
-    def _fetch_summary(self, guild_id: int, summary_id: SummaryID) -> Optional[QuestSummary]:
-        guild_entry = self.bot.guild_data[guild_id]
-        db = guild_entry["db"]
-        doc = db["summaries"].find_one(
-            {
-                "guild_id": guild_id,
-                "$or": [
-                    {"summary_id.value": str(summary_id)},
-                    {"_id": str(summary_id)},
-                ],
-            }
-        )
-        if not doc:
-            return None
-        return self._summary_from_doc(guild_id, doc)
+    async def _fetch_summary(
+        self, guild_id: int, summary_id: SummaryID
+    ) -> Optional[QuestSummary]:
+        """Fetch a summary from the PostgreSQL database."""
+        return await self._summaries_repo.get(guild_id, str(summary_id))
 
-    def _next_summary_id(self, guild_id: int) -> SummaryID:
-        guild_entry = self.bot.guild_data[guild_id]
-        db = guild_entry["db"]
-        coll = db["summaries"]
-        while True:
-            candidate = SummaryID.generate()
-            exists = coll.count_documents(
-                {"guild_id": guild_id, "summary_id.value": str(candidate)}, limit=1
-            )
-            if not exists:
-                return candidate
+    async def _next_summary_id(self, guild_id: int) -> SummaryID:
+        """Generate a new unique SummaryID using the PostgreSQL repo."""
+        summary_id_str = await self._summaries_repo.next_id(guild_id)
+        parsed_id: SummaryID = SummaryID.parse(summary_id_str)  # type: ignore[assignment]
+        return parsed_id
 
     def _build_summary_embed(
         self,
@@ -235,7 +145,9 @@ class SummaryCommandsCog(commands.Cog):
             )
 
         status_label = summary.status.value.title()
-        embed.set_footer(text=f"Summary ID: {summary.summary_id} • Status: {status_label}")
+        embed.set_footer(
+            text=f"Summary ID: {summary.summary_id} • Status: {status_label}"
+        )
         return embed
 
     async def _sync_summary_announcement(
@@ -260,6 +172,14 @@ class SummaryCommandsCog(commands.Cog):
                     exc,
                 )
                 return
+
+        if not isinstance(channel, discord.TextChannel):
+            logger.debug(
+                "Summary channel %s in guild %s is not a text channel",
+                summary.channel_id,
+                guild.id,
+            )
+            return
 
         try:
             message = await channel.fetch_message(int(summary.message_id))
@@ -289,6 +209,7 @@ class SummaryCommandsCog(commands.Cog):
         interaction: discord.Interaction,
         summary: QuestSummary,
     ) -> tuple[discord.Message, Optional[discord.Thread]]:
+        assert interaction.guild is not None, "Guild must not be None"
         settings = guild_settings_store.fetch_settings(interaction.guild.id) or {}
         channel_id = settings.get("summary_channel_id")
         if channel_id is None:
@@ -298,12 +219,16 @@ class SummaryCommandsCog(commands.Cog):
 
         channel: Optional[discord.TextChannel] = None
         try:
-            channel = interaction.guild.get_channel(int(channel_id))  # type: ignore[arg-type]
+            fetched = interaction.guild.get_channel(int(channel_id))  # type: ignore[arg-type]
+            if isinstance(fetched, discord.TextChannel):
+                channel = fetched
         except (TypeError, ValueError):
             channel = None
         if channel is None:
             try:
-                channel = await interaction.guild.fetch_channel(int(channel_id))
+                fetched = await interaction.guild.fetch_channel(int(channel_id))
+                if isinstance(fetched, discord.TextChannel):
+                    channel = fetched
             except Exception:
                 channel = None
         if channel is None or not isinstance(channel, discord.TextChannel):
@@ -314,7 +239,9 @@ class SummaryCommandsCog(commands.Cog):
             raise ValueError("Unable to resolve bot member for permission checks.")
         perms = channel.permissions_for(me)
         if not perms.send_messages:
-            raise ValueError(f"I need Send Messages permission in {channel.mention} to share summaries.")
+            raise ValueError(
+                f"I need Send Messages permission in {channel.mention} to share summaries."
+            )
         if not perms.create_public_threads and not perms.create_private_threads:
             raise ValueError(
                 f"I need permission to create threads in {channel.mention} to open summary discussions."
@@ -367,7 +294,8 @@ class SummaryCommandsCog(commands.Cog):
         quests: List[QuestID] = []
         for token in tokens:
             try:
-                quests.append(QuestID.parse(token))
+                quest_id: QuestID = QuestID.parse(token)  # type: ignore[assignment]
+                quests.append(quest_id)
             except ValueError:
                 raise ValueError(f"Unable to parse quest ID `{token}`.")
         return quests
@@ -375,32 +303,27 @@ class SummaryCommandsCog(commands.Cog):
     async def _list_owned_characters(
         self, guild: discord.Guild, member: discord.Member
     ) -> Dict[str, CharacterID]:
-        await self._ensure_guild_cache(guild)
-        guild_entry = self.bot.guild_data[guild.id]
-        db = guild_entry["db"]
-        owner_id = str(UserID.from_body(str(member.id)))
-        cursor = (
-            db["characters"]
-            .find(
-                {"owner_id.value": owner_id},
-                {"_id": 0, "character_id": 1},
-            )
-            .limit(50)
-        )
+        """Get all characters owned by a member as a dict mapping ID string to CharacterID."""
+        owner_id: UserID = UserID.from_body(str(member.id))  # type: ignore[assignment]
+        characters = await self._characters_repo.list_by_owner(guild.id, owner_id)
         owned: Dict[str, CharacterID] = {}
-        for doc in cursor:
-            payload = doc.get("character_id")
-            try:
-                char_id = self._parse_entity_id(CharacterID, payload)
-            except ValueError:
-                char_id = None
+        for char in characters:
+            char_id = char.character_id
             if isinstance(char_id, CharacterID):
                 owned[str(char_id)] = char_id
+            elif isinstance(char_id, str):
+                try:
+                    parsed: CharacterID = CharacterID.parse(char_id)  # type: ignore[assignment]
+                    owned[str(parsed)] = parsed
+                except ValueError:
+                    pass
         return owned
 
     # ---------- Commands ----------
 
-    @summary.command(name="create", description="Guide a DM flow to publish a quest summary.")
+    @summary.command(
+        name="create", description="Guide a DM flow to publish a quest summary."
+    )
     @app_commands.guild_only()
     async def summary_create(self, interaction: discord.Interaction) -> None:
         if interaction.guild is None:
@@ -480,7 +403,9 @@ class SummaryCommandsCog(commands.Cog):
             summary.validate_summary()
 
             try:
-                message, thread = await self._post_summary_announcement(interaction, summary)
+                message, thread = await self._post_summary_announcement(
+                    interaction, summary
+                )
             except ValueError as exc:
                 await interaction.followup.send(str(exc), ephemeral=True)
                 return
@@ -498,10 +423,21 @@ class SummaryCommandsCog(commands.Cog):
 
             self._persist_summary(interaction.guild.id, summary)
 
-            thread_notice = f"[discussion thread]({thread.jump_url})" if thread else "discussion thread"
+            thread_notice = (
+                f"[discussion thread]({thread.jump_url})"
+                if thread
+                else "discussion thread"
+            )
+
+            # Use message.channel which is guaranteed to be TextChannel from _post_summary_announcement
+            channel_mention = (
+                message.channel.mention
+                if isinstance(message.channel, discord.TextChannel)
+                else str(message.channel)
+            )
 
             await interaction.followup.send(
-                f"Summary `{summary.summary_id}` posted in {message.channel.mention}. "
+                f"Summary `{summary.summary_id}` posted in {channel_mention}. "
                 f"Continue the story in the {thread_notice}.",
                 ephemeral=True,
             )
@@ -520,7 +456,9 @@ class SummaryCommandsCog(commands.Cog):
     @summary.command(name="edit", description="Update an existing summary via DM.")
     @app_commands.describe(summary="Summary ID (e.g. SUMMA1B2C3)")
     @app_commands.guild_only()
-    async def summary_edit(self, interaction: discord.Interaction, summary: str) -> None:
+    async def summary_edit(
+        self, interaction: discord.Interaction, summary: str
+    ) -> None:
         if interaction.guild is None:
             await interaction.response.send_message(
                 "This command can only be used inside a guild.", ephemeral=True
@@ -535,15 +473,16 @@ class SummaryCommandsCog(commands.Cog):
             return
 
         try:
-            summary_id = SummaryID.parse(summary.upper())
+            summary_id: SummaryID = SummaryID.parse(summary.upper())  # type: ignore[assignment]
         except ValueError as exc:
             await interaction.response.send_message(str(exc), ephemeral=True)
             return
 
-        await self._ensure_guild_cache(interaction.guild)
-        existing = self._fetch_summary(interaction.guild.id, summary_id)
+        existing = await self._fetch_summary(interaction.guild.id, summary_id)
         if existing is None:
-            await interaction.response.send_message("Summary not found.", ephemeral=True)
+            await interaction.response.send_message(
+                "Summary not found.", ephemeral=True
+            )
             return
 
         try:
@@ -669,7 +608,14 @@ class SummarySessionBase:
         embed: Optional[discord.Embed] = None,
     ) -> discord.Message:
         try:
-            return await self.dm.send(content=content, embed=embed)
+            if content is not None and embed is not None:
+                return await self.dm.send(content=content, embed=embed)
+            elif embed is not None:
+                return await self.dm.send(embed=embed)
+            elif content is not None:
+                return await self.dm.send(content=content)
+            else:
+                return await self.dm.send(content="")
         except discord.Forbidden as exc:
             raise RuntimeError(
                 "I can't send you direct messages anymore. Enable DMs and run the command again."
@@ -697,7 +643,8 @@ class SummarySessionBase:
                 message = await self.cog.bot.wait_for(
                     "message",
                     timeout=self.timeout,
-                    check=lambda m: m.author.id == self.member.id and m.channel.id == self.dm.id,
+                    check=lambda m: m.author.id == self.member.id
+                    and m.channel.id == self.dm.id,
                 )
             except asyncio.TimeoutError as exc:
                 raise TimeoutError from exc
@@ -712,7 +659,9 @@ class SummarySessionBase:
                 return None
             if not content:
                 if required:
-                    await self._safe_send("Please provide a response, or type `cancel`.")
+                    await self._safe_send(
+                        "Please provide a response, or type `cancel`."
+                    )
                     continue
                 return None
             return content
@@ -723,12 +672,16 @@ class SummarySessionBase:
     async def _update_preview(self, summary: QuestSummary) -> None:
         embed = self._build_preview_embed(summary)
         if self._preview_message is None:
-            self._preview_message = await self._safe_send("**Current summary preview:**", embed=embed)
+            self._preview_message = await self._safe_send(
+                "**Current summary preview:**", embed=embed
+            )
             return
         try:
             await self._preview_message.edit(embed=embed)
         except discord.HTTPException:
-            self._preview_message = await self._safe_send("**Current summary preview:**", embed=embed)
+            self._preview_message = await self._safe_send(
+                "**Current summary preview:**", embed=embed
+            )
 
     def _format_owned_characters(self) -> str:
         return ", ".join(f"`{cid}`" for cid in self.owned_characters.keys())
@@ -736,7 +689,7 @@ class SummarySessionBase:
 
 class SummaryCreationSession(SummarySessionBase):
     async def run(self) -> SummaryCreationResult:
-        summary_id = self.cog._next_summary_id(self.guild.id)
+        summary_id = await self.cog._next_summary_id(self.guild.id)
         summary = QuestSummary(
             summary_id=summary_id,
             guild_id=self.guild.id,
@@ -752,8 +705,11 @@ class SummaryCreationSession(SummarySessionBase):
                 f"Owned characters: {self._format_owned_characters()}"
             )
 
-            title = await self._ask("**Step 1:** What's the summary title?", required=True)
-            summary.title = title.strip()
+            title = await self._ask(
+                "**Step 1:** What's the summary title?", required=True
+            )
+            if title:
+                summary.title = title.strip()
             await self._update_preview(summary)
 
             quests_input = await self._ask(
@@ -772,6 +728,10 @@ class SummaryCreationSession(SummarySessionBase):
                 "**Step 3:** Which of your characters were involved? Provide IDs separated by commas or spaces.",
                 required=True,
             )
+            if not characters_input:
+                return SummaryCreationResult(
+                    False, error="Character selection is required."
+                )
             try:
                 summary.characters = self.cog._parse_character_ids(
                     characters_input,
@@ -820,7 +780,9 @@ class SummaryUpdateSession(SummarySessionBase):
 
     async def run(self) -> SummaryUpdateResult:
         try:
-            await self._safe_send("Let's update your summary. Respond with new values or `skip` to keep existing.")
+            await self._safe_send(
+                "Let's update your summary. Respond with new values or `skip` to keep existing."
+            )
             await self._update_preview(self.summary)
 
             title = await self._ask(
@@ -846,7 +808,9 @@ class SummaryUpdateSession(SummarySessionBase):
                     self.summary.linked_quests = []
                 else:
                     try:
-                        self.summary.linked_quests = self.cog._parse_quest_ids(quests_input)
+                        self.summary.linked_quests = self.cog._parse_quest_ids(
+                            quests_input
+                        )
                     except ValueError as exc:
                         return SummaryUpdateResult(False, error=str(exc))
             await self._update_preview(self.summary)
@@ -892,7 +856,9 @@ class SummaryUpdateSession(SummarySessionBase):
         except RuntimeError as exc:
             return SummaryUpdateResult(False, error=str(exc))
 
-        self.summary.description = self.summary.description or "Story continues in the thread."
+        self.summary.description = (
+            self.summary.description or "Story continues in the thread."
+        )
         self.summary.raw = self.summary.description
         return SummaryUpdateResult(True, summary=self.summary)
 

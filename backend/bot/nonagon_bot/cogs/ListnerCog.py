@@ -5,8 +5,7 @@ from typing import Optional
 from discord import Guild, Member, Message, RawReactionActionEvent, VoiceState
 from discord.ext import commands
 
-from ..database import db_client
-from ...domain.models.UserModel import User
+from nonagon_bot.core.domain.models.UserModel import User
 from ..services.user_registry import UserRegistry
 
 
@@ -20,39 +19,17 @@ class ListnerCog(commands.Cog):
         self._user_registry = UserRegistry()
         self._clock = lambda: datetime.now(timezone.utc)
 
-    async def _ensure_cached_user(self, member: Member) -> User:
+    async def _ensure_user(self, member: Member) -> User:
+        """Get or create user from database for the given member."""
         guild_id = member.guild.id
-        guild_entry = self.bot.guild_data.get(guild_id)
-
-        if guild_entry is None:
-            await self.bot.load_or_create_guild_cache(member.guild)
-            guild_entry = self.bot.guild_data[guild_id]
-
-        users = guild_entry.setdefault("users", {})
-        user = users.get(member.id)
-
-        if user is None:
-            user = await self._user_registry.ensure_member(member, guild_id)
-            user.guild_id = guild_id
-            users[member.id] = user
-
+        user = await self._user_registry.ensure_member(member, guild_id)
+        user.guild_id = guild_id
         return user
 
-    async def _resolve_cached_user(
+    async def _resolve_user(
         self, guild: Guild, user_id: int
     ) -> Optional[User]:
-        guild_entry = self.bot.guild_data.get(guild.id)
-
-        if guild_entry is None:
-            await self.bot.load_or_create_guild_cache(guild)
-            guild_entry = self.bot.guild_data[guild.id]
-
-        users = guild_entry.setdefault("users", {})
-        user = users.get(user_id)
-
-        if user is not None:
-            return user
-
+        """Resolve a user by ID, fetching from Discord if needed."""
         member = guild.get_member(user_id)
         if member is None:
             try:
@@ -68,7 +45,6 @@ class ListnerCog(commands.Cog):
 
         user = await self._user_registry.ensure_member(member, guild.id)
         user.guild_id = guild.id
-        users[user_id] = user
         return user
 
     async def _resolve_message_author_id(
@@ -103,28 +79,17 @@ class ListnerCog(commands.Cog):
 
     @commands.Cog.listener("on_member_join")
     async def _on_member_join(self, member: Member):
-
         if member.bot:
             return
 
         user = await self._user_registry.ensure_member(member, member.guild.id)
         user.guild_id = member.guild.id
-        ensure_entry = getattr(self.bot, "_ensure_guild_entry", None)
-        if callable(ensure_entry):
-            guild_entry = ensure_entry(member.guild.id)
-        else:
-            guild_entry = self.bot.guild_data.setdefault(
-                member.guild.id,
-                {"db": db_client.get_database(str(member.guild.id)), "users": {}},
-            )
-        guild_entry.setdefault("users", {})[member.id] = user
-        await self.bot.dirty_data.put((member.guild.id, member.id))
+        
         logger.info(
-            "User %s joined guild %s at %s (cached users=%d)",
+            "User %s joined guild %s at %s",
             member.id,
             member.guild.id,
             member.joined_at,
-            len(self.bot.guild_data[member.guild.id]["users"]),
         )
 
     @commands.Cog.listener("on_message")
@@ -140,13 +105,12 @@ class ListnerCog(commands.Cog):
         guild_id = message.guild.id
         author_id = message.author.id
 
-        user = await self._ensure_cached_user(message.author)
+        user = await self._ensure_user(message.author)
         user.increment_messages_count()
 
         timestamp = message.created_at or self._clock()
         user.update_last_active(timestamp)
 
-        await self.bot.dirty_data.put((guild_id, author_id))
         logger.info(
             "Processed message gid=%s uid=%s channel=%s total_messages=%d last_active=%s",
             guild_id,
@@ -192,7 +156,7 @@ class ListnerCog(commands.Cog):
                     )
                     return
             reacting_member = member_obj
-        reacting_user = await self._ensure_cached_user(reacting_member)
+        reacting_user = await self._ensure_user(reacting_member)
         reacting_user.increment_reactions_given()
         reacting_user.update_last_active(self._clock())
 
@@ -200,17 +164,13 @@ class ListnerCog(commands.Cog):
             guild, reaction.channel_id, reaction.message_id
         )
         if author_id is None:
-            await self.bot.dirty_data.put((guild_id, reacting_user_id))
             return
 
-        author_user = await self._resolve_cached_user(guild, author_id)
+        author_user = await self._resolve_user(guild, author_id)
         if author_user is None:
             return
 
         author_user.increment_reactions_received()
-
-        await self.bot.dirty_data.put((guild_id, reacting_user_id))
-        await self.bot.dirty_data.put((guild_id, author_id))
         logger.info(
             "Processed reaction %s gid=%s reactor=%s author=%s (given=%d received=%d)",
             reaction.emoji,
@@ -232,7 +192,7 @@ class ListnerCog(commands.Cog):
         if member.bot:
             return
 
-        user = await self._ensure_cached_user(member)
+        user = await self._ensure_user(member)
         user.update_last_active(self._clock())
 
         now = self._clock()
@@ -264,7 +224,6 @@ class ListnerCog(commands.Cog):
             )
             return
 
-        await self.bot.dirty_data.put((member.guild.id, member.id))
         logger.info(
             "Voice state update gid=%s uid=%s before=%s after=%s total_hours=%.2f",
             member.guild.id,
@@ -276,42 +235,21 @@ class ListnerCog(commands.Cog):
 
     @commands.Cog.listener("on_guild_join")
     async def _on_guild_join(self, guild: Guild):
-        """When joining a guild:
-        - Scrape and create Users from Guild.Members
-        - Create database for new guild
-        - Save all data to cache"""
-
+        """When joining a guild, ensure all members are registered in the database."""
         logger.info("Joined new guild: %s (ID: %s)", guild.name, guild.id)
 
-        users = {}
         for member in guild.members:
-
             if member.bot:
                 continue
 
-            logger.info("Caching user for guild join %s (ID: %s)", member.name, member.id)
-            user = await self._user_registry.ensure_member(member)
-            users[member.id] = user
+            logger.info("Registering user for guild join %s (ID: %s)", member.name, member.id)
+            await self._user_registry.ensure_member(member)
 
-            await self.bot.dirty_data.put((guild.id, member.id))
-
-
-        db_name = f"{guild.id}"
-        g_db = db_client.get_database(db_name)
-
-        self.bot.guild_data[guild.id] = {
-            "db": g_db,
-            "users": users
-        }
-        logger.info("Cache created for guild %s.", guild.name)
+        logger.info("Registered users for guild %s.", guild.name)
 
     @commands.Cog.listener("on_guild_remove")
     async def _on_guild_remove(self, guild: Guild):
-        logger.info(
-            "Left guild: %s (ID: %s) \nRemoving cache...", guild.name, guild.id
-        )
-        self.bot.guild_data.pop(guild.id, None)
-        logger.info("Removed caches for guild %s.", guild.name)
+        logger.info("Left guild: %s (ID: %s)", guild.name, guild.id)
 
     @commands.Cog.listener("on_error")
     async def _on_error(self, event_method, /, *args, **kwargs):

@@ -1,4 +1,4 @@
-.PHONY: help install dev api bot frontend test lint build up down logs generate clean
+.PHONY: help install dev api bot frontend test lint db-up db-down clean
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # HELP
@@ -42,23 +42,7 @@ bot: ## Run Discord bot
 frontend: ## Run frontend dev server
 	cd frontend && npm run dev
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# CODE GENERATION
-# ═══════════════════════════════════════════════════════════════════════════════
-
-generate: ## Generate types from JSON Schema (Python + TypeScript)
-	./scripts/generate-types.sh
-
-generate-python: ## Generate only Python Pydantic models
-	datamodel-codegen \
-		--input shared/schemas \
-		--output backend/api/nonagon_api/generated/schemas.py \
-		--input-file-type jsonschema \
-		--output-model-type pydantic_v2.BaseModel \
-		--target-python-version 3.11
-
-validate-schemas: ## Validate JSON Schema files
-	./scripts/validate-schemas.sh
+# (Removed) JSON Schema code generation targets
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TESTING
@@ -95,52 +79,27 @@ format: ## Format code
 	ruff format backend/
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# DOCKER
+# DATABASE (Docker)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-build: ## Build all Docker images
-	docker compose build
+db-up: ## Start PostgreSQL database
+	docker compose up -d postgres
 
-build-api: ## Build API Docker image
-	docker compose build api
-
-build-bot: ## Build bot Docker image
-	docker compose build bot
-
-build-frontend: ## Build frontend Docker image
-	docker compose build frontend
-
-up: ## Start all services in background
-	docker compose up -d
-
-up-backend: ## Start only backend services (api, bot, mongo)
-	docker compose up -d api bot mongo
-
-down: ## Stop all services
+db-down: ## Stop PostgreSQL database
 	docker compose down
 
-restart: ## Restart all services
-	docker compose restart
+db-logs: ## View PostgreSQL logs
+	docker compose logs -f --tail=100 postgres
 
-logs: ## Tail logs from all services
-	docker compose logs -f --tail=200
-
-logs-api: ## Tail API logs
-	docker compose logs -f --tail=200 api
-
-logs-bot: ## Tail bot logs
-	docker compose logs -f --tail=200 bot
+db-reset: ## Reset database (WARNING: destroys all data)
+	docker compose down -v
+	docker compose up -d postgres
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CI
 # ═══════════════════════════════════════════════════════════════════════════════
 
 ci: lint test ## Run CI checks (lint + test)
-
-ci-check-generated: ## Check if generated files are up-to-date
-	$(MAKE) generate
-	git diff --exit-code backend/api/nonagon_api/generated/
-	git diff --exit-code frontend/src/types/generated/
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CLEANUP
@@ -152,7 +111,4 @@ clean: ## Clean build artifacts
 	find . -type d -name ".ruff_cache" -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || true
 	rm -rf .coverage htmlcov/
-	cd frontend && rm -rf .next node_modules/.cache 2>/dev/null || true
-
-clean-docker: ## Remove Docker volumes and images
-	docker compose down -v --rmi local
+	cd frontend && rm -rf dist .parcel-cache node_modules/.cache 2>/dev/null || true

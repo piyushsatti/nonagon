@@ -6,7 +6,7 @@ from typing import Iterable, Sequence
 
 import discord
 
-from nonagon_core.domain.models.QuestModel import QuestStatus
+from nonagon_bot.core.domain.models.QuestModel import QuestStatus
 
 
 @dataclass

@@ -9,21 +9,21 @@ from typing import List, Optional
 
 import strawberry
 
-from nonagon_core.domain.models.CharacterModel import Character as DCharacter
-from nonagon_core.domain.models.CharacterModel import CharacterRole
-from nonagon_core.domain.models.EntityIDModel import CharacterID, QuestID, SummaryID, UserID
-from nonagon_core.domain.models.LookupModel import LookupEntry as DLookupEntry
-from nonagon_core.domain.models.QuestModel import Quest as DQuest
-from nonagon_core.domain.models.QuestModel import QuestStatus as DQuestStatus
-from nonagon_core.domain.models.SummaryModel import QuestSummary as DSummary
-from nonagon_core.domain.models.SummaryModel import SummaryKind as DSummaryKind
-from nonagon_core.domain.models.UserModel import Role as DRole
-from nonagon_core.domain.models.UserModel import User as DUser
-from nonagon_core.infra.postgres.characters_repo import CharactersRepoPostgres
-from nonagon_core.infra.postgres.lookup_repo import LookupRepoPostgres
-from nonagon_core.infra.postgres.quests_repo import QuestsRepoPostgres
-from nonagon_core.infra.postgres.summaries_repo import SummariesRepoPostgres
-from nonagon_core.infra.postgres.users_repo import UsersRepoPostgres
+from nonagon_bot.core.domain.models.CharacterModel import Character as DCharacter
+from nonagon_bot.core.domain.models.CharacterModel import CharacterRole
+from nonagon_bot.core.domain.models.EntityIDModel import CharacterID, QuestID, SummaryID, UserID
+from nonagon_bot.core.domain.models.LookupModel import LookupEntry as DLookupEntry
+from nonagon_bot.core.domain.models.QuestModel import Quest as DQuest
+from nonagon_bot.core.domain.models.QuestModel import QuestStatus as DQuestStatus
+from nonagon_bot.core.domain.models.SummaryModel import QuestSummary as DSummary
+from nonagon_bot.core.domain.models.SummaryModel import SummaryKind as DSummaryKind
+from nonagon_bot.core.domain.models.UserModel import Role as DRole
+from nonagon_bot.core.domain.models.UserModel import User as DUser
+from nonagon_bot.core.infra.postgres.characters_repo import CharactersRepoPostgres
+from nonagon_bot.core.infra.postgres.lookup_repo import LookupRepoPostgres
+from nonagon_bot.core.infra.postgres.quests_repo import QuestsRepoPostgres
+from nonagon_bot.core.infra.postgres.summaries_repo import SummariesRepoPostgres
+from nonagon_bot.core.infra.postgres.users_repo import UsersRepoPostgres
 
 from nonagon_api.graphql.converters import (
     domain_character_to_gql,
@@ -147,6 +147,37 @@ class Query:
         """Get all lookup entries for a guild."""
         entries = await lookup_repo.list_all(guild_id)
         return [domain_lookup_to_gql(e) for e in entries]
+
+    @strawberry.field
+    async def users_by_guild(self, guild_id: int) -> List[User]:
+        """List all users for a guild."""
+        users = await users_repo.list_by_guild(guild_id)
+        for u in users:
+            u.guild_id = guild_id
+        return [domain_user_to_gql(u) for u in users]
+
+    @strawberry.field
+    async def characters_by_owner(self, guild_id: int, owner_id: str) -> List[Character]:
+        """List all characters owned by a user in a guild."""
+        chars = await characters_repo.list_by_owner(guild_id, owner_id)
+        return [domain_character_to_gql(c) for c in chars]
+
+    @strawberry.field
+    async def pending_quests(self, guild_id: int, before: Optional[datetime] = None) -> List[Quest]:
+        """List quests pending announcement before a given time (defaults to now)."""
+        ref_time = before or _now()
+        quests = await quests_repo.list_pending_announce(guild_id, ref_time)
+        for q in quests:
+            q.guild_id = guild_id
+        return [domain_quest_to_gql(q) for q in quests]
+
+    @strawberry.field
+    async def recent_quests(self, guild_id: int, limit: int = 20) -> List[Quest]:
+        """List recent quests for a guild."""
+        quests = await quests_repo.list_recent(guild_id, limit)
+        for q in quests:
+            q.guild_id = guild_id
+        return [domain_quest_to_gql(q) for q in quests]
 
 
 # =============================================================================

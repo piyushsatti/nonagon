@@ -8,7 +8,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from nonagon_bot.database import db_client
+from nonagon_bot.database import get_connection, ping_database
 from nonagon_bot.utils.logging import get_logger
 
 
@@ -64,14 +64,16 @@ class Diagnostics(commands.Cog):
         parts.append(f"{seconds}s")
         return " ".join(parts)
 
-    async def _mongo_status(self) -> Tuple[bool, str]:
+    async def _db_status(self) -> Tuple[bool, str]:
         def _ping() -> Tuple[bool, str]:
             try:
-                db_client.admin.command("ping")
+                ok = ping_database()
+                if ok:
+                    return True, "OK"
+                return False, "Ping returned False"
             except Exception as exc:  # pragma: no cover - defensive logging
-                logger.exception("MongoDB ping failed: %s", exc)
+                logger.exception("PostgreSQL ping failed: %s", exc)
                 return False, str(exc)
-            return True, "OK"
 
         return await asyncio.to_thread(_ping)
 
@@ -85,7 +87,7 @@ class Diagnostics(commands.Cog):
         try:
             now = datetime.now(timezone.utc)
             uptime = self._human_duration(now - self.started_at)
-            mongo_ok, mongo_msg = await self._mongo_status()
+            db_ok, db_msg = await self._db_status()
             shard_id = getattr(self.bot, "shard_id", None)
             latency_ms = round(self.bot.latency * 1000, 2)
 
@@ -98,8 +100,8 @@ class Diagnostics(commands.Cog):
                 inline=True,
             )
             embed.add_field(
-                name="MongoDB",
-                value="✅ " + mongo_msg if mongo_ok else "⚠️ " + mongo_msg,
+                name="PostgreSQL",
+                value="✅ " + db_msg if db_ok else "⚠️ " + db_msg,
                 inline=True,
             )
             embed.add_field(name="Guilds", value=str(len(self.bot.guilds)), inline=True)
@@ -191,54 +193,10 @@ class Diagnostics(commands.Cog):
     )
     async def cacheprobe(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True)
-        try:
-            guild_cache = getattr(self.bot, "guild_data", {})
-            cached_guilds = len(guild_cache)
-            cached_users = sum(
-                len(entry.get("users", {})) for entry in guild_cache.values()
-            )
-
-            mismatches: List[str] = []
-            for guild_id, entry in guild_cache.items():
-
-                def _count_docs() -> int | None:
-                    try:
-                        match = {
-                            "$or": [
-                                {"guild_id": guild_id},
-                                {"guild_id": {"$exists": False}},
-                            ]
-                        }
-                        return entry["db"].users.count_documents(match)
-                    except Exception as exc:  # pragma: no cover - defensive logging
-                        logger.exception(
-                            "Failed counting users for guild %s: %s", guild_id, exc
-                        )
-                        return None
-
-                remote_count = await asyncio.to_thread(_count_docs)
-                local_count = len(entry.get("users", {}))
-                if remote_count is not None and remote_count != local_count:
-                    mismatches.append(
-                        f"Guild {guild_id}: cache={local_count}, mongo={remote_count}"
-                    )
-
-            embed = self._make_embed("Cache Probe")
-            embed.add_field(
-                name="Connected Guilds", value=str(len(self.bot.guilds)), inline=True
-            )
-            embed.add_field(name="Cached Guilds", value=str(cached_guilds), inline=True)
-            embed.add_field(name="Cached Users", value=str(cached_users), inline=True)
-            if mismatches:
-                embed.add_field(
-                    name="Mismatches", value="\n".join(mismatches), inline=False
-                )
-            else:
-                embed.add_field(name="Mismatches", value="None", inline=False)
-
-            await interaction.followup.send(embed=embed, ephemeral=True)
-        except Exception as exc:
-            await self._send_failure(interaction, "cacheprobe", exc)
+        await interaction.followup.send(
+            "Cache system has been removed. Bot now uses direct database access.",
+            ephemeral=True
+        )
 
     @app_commands.command(
         name="eventlog", description="Show recent events captured by the bot."

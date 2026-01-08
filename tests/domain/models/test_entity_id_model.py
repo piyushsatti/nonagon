@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.domain.models.EntityIDModel import (
+from nonagon_bot.core.domain.models.EntityIDModel import (
     CharacterID,
     POSTAL_BODY_PATTERN,
     QuestID,

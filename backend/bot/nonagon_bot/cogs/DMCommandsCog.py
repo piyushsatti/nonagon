@@ -6,7 +6,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from nonagon_core.domain.models.UserModel import User
+from nonagon_bot.core.domain.models.UserModel import User
 from nonagon_bot.utils.logging import get_logger
 
 

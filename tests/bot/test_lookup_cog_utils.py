@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from app.bot.cogs.LookupCommandsCog import _build_lookup_embed
-from app.domain.models.LookupModel import LookupEntry
+from nonagon_bot.cogs.LookupCommandsCog import _build_lookup_embed
+from nonagon_bot.core.domain.models.LookupModel import LookupEntry
 
 
 def test_build_lookup_embed_includes_timestamp() -> None:

@@ -1,17 +1,17 @@
 # Nonagon
 
-Nonagon is a multi-guild Discord automation platform that streamlines quest scheduling, player sign-ups, summaries, and engagement analytics. It bundles a Discord bot with a FastAPI service so community teams can monitor activity and keep adventures moving.
+Nonagon is a multi-guild Discord automation platform that streamlines quest scheduling, player sign-ups, summaries, and engagement analytics. It bundles a Discord bot with a FastAPI/GraphQL service so community teams can monitor activity and keep adventures moving.
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|------------|
-| API | Python 3.11+, FastAPI, Uvicorn, Motor (async MongoDB) |
-| Bot | Python 3.11+, discord.py, PyMongo |
-| Frontend | Next.js 14, React, TypeScript |
-| Database | MongoDB 7+ |
+| API | Python 3.11+, FastAPI, Strawberry GraphQL, SQLAlchemy |
+| Bot | Python 3.11+, discord.py, psycopg2 |
+| Frontend | React 18, Parcel, graphql-request |
+| Database | PostgreSQL 16+ (via Docker or Supabase) |
 | Schemas | JSON Schema (source of truth) |
-| Dev Tools | uv, Ruff, pytest, Docker Compose |
+| Dev Tools | pip, Ruff, pytest, Docker (for database) |
 
 ## Quick Start
 
@@ -19,9 +19,7 @@ Nonagon is a multi-guild Discord automation platform that streamlines quest sche
 
 - Python 3.11+
 - Node.js 20+
-- [uv](https://docs.astral.sh/uv/) (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
-- MongoDB 7+ (local or Atlas)
-- Docker & Docker Compose (optional, for containerized runs)
+- Docker & Docker Compose (for PostgreSQL database)
 
 ### 1. Clone & Install
 
@@ -29,98 +27,93 @@ Nonagon is a multi-guild Discord automation platform that streamlines quest sche
 git clone https://github.com/your-org/nonagon.git
 cd nonagon
 
-# Backend (creates backend/.venv automatically)
-cd backend
-uv sync --all-extras
-source .venv/bin/activate
-cd ..
+# Install Python dependencies
+pip install -e ".[dev]"
 
-# Frontend
-cd frontend
-npm install
-cd ..
+# Install frontend dependencies
+cd frontend && npm install && cd ..
 ```
 
-### 2. Environment Variables
+### 2. Start Database
 
-Create a `.env` file in the repository root:
+```bash
+make db-up  # Starts PostgreSQL in Docker
+```
+
+### 3. Environment Variables
+
+Copy `.env.example` to `.env` and configure:
 
 ```dotenv
-# MongoDB
-ATLAS_URI=mongodb://localhost:27017
-DB_NAME=nonagon
+# Database (local Docker PostgreSQL)
+DATABASE_URL=postgresql+asyncpg://nonagon:nonagon@localhost:5432/nonagon
 
 # Discord Bot
 BOT_TOKEN=your-discord-bot-token
 BOT_CLIENT_ID=your-discord-client-id
 
-# Optional overrides
-MONGO_URI=           # Bot uses this → falls back to ATLAS_URI
-MONGODB_URI=         # API uses this → falls back to ATLAS_URI
+# API URL (for frontend)
+API_URL=http://localhost:8000
 ```
 
-### 3. Run Services
-
-**Option A: Make commands (recommended for development)**
+### 4. Run Services
 
 ```bash
-make install      # Install all dependencies
-make api          # Start API server (port 8000)
-make bot          # Start Discord bot (separate terminal)
-make frontend     # Start Next.js dev server (port 3000)
+# Terminal 1: API server
+make api
+
+# Terminal 2: Discord bot (requires BOT_TOKEN)
+make bot
+
+# Terminal 3: Frontend
+make frontend
 ```
 
-**Option B: Docker Compose (production-like)**
-
+Or run all in parallel:
 ```bash
-docker compose up --build
+make dev
 ```
 
-### 4. Verify Installation
+### 5. Verify Installation
 
-- API docs: [http://localhost:8000/docs](http://localhost:8000/docs)
-- Frontend: [http://localhost:3000](http://localhost:3000)
-- Health check: `curl http://localhost:8000/health`
+- GraphQL Playground: [http://localhost:8000/graphql](http://localhost:8000/graphql)
+- Frontend: [http://localhost:1234](http://localhost:1234)
+- Health check: `curl http://localhost:8000/healthz`
 
 ## Project Structure
 
 ```
 nonagon/
 ├── backend/
-│   ├── pyproject.toml       # Single config for all backend packages
-│   ├── .venv/               # Python virtual environment
 │   ├── core/                # Shared domain & infrastructure
 │   │   └── nonagon_core/
 │   │       ├── domain/      # Models, entities, use cases
-│   │       └── infra/       # Database, repositories, serialization
-│   ├── api/                 # FastAPI service
+│   │       └── infra/       # PostgreSQL repos, serialization
+│   ├── api/                 # FastAPI + GraphQL service
 │   │   └── nonagon_api/
-│   │       ├── routers/     # REST endpoints
-│   │       ├── schemas.py   # Pydantic request/response models
-│   │       └── mappers.py   # Domain ↔ API transformations
+│   │       ├── graphql/     # Strawberry schema, resolvers
+│   │       └── generated/   # Generated Pydantic models
 │   └── bot/                 # Discord bot
 │       └── nonagon_bot/
 │           ├── cogs/        # Command groups
-│           ├── services/    # Business logic
+│           ├── services/    # Business logic, GraphQL client
 │           └── utils/       # Helpers, embeds
 ├── frontend/
 │   ├── package.json
-│   ├── node_modules/
 │   └── src/
-│       ├── app/             # Next.js App Router pages
-│       ├── api/             # API client
-│       └── types/generated/ # TypeScript types from JSON Schema
+│       ├── api/             # GraphQL client
+│       ├── components/      # React components
+│       ├── pages/           # Page components
+│       └── types/           # (no JSON Schema codegen)
 ├── shared/
 │   └── schemas/             # JSON Schema (source of truth)
-│       ├── common.schema.json
-│       ├── quest.schema.json
-│       └── ...
 ├── scripts/
-│   ├── generate-types.sh    # Generate Pydantic + TS types
-│   └── validate-schemas.sh  # Validate JSON Schema files
+│   ├── (removed)            # JSON Schema generation scripts removed
+│   └── migrations/          # Database migrations
 ├── tests/                   # All tests
 ├── docs/                    # Documentation
-├── docker-compose.yml
+├── docker-compose.yml       # PostgreSQL database only
+├── pyproject.toml           # Python project config
 └── Makefile
 ```
 
@@ -129,23 +122,24 @@ nonagon/
 | Command | Description |
 |---------|-------------|
 | `make install` | Install all dependencies (backend + frontend) |
-| `make api` | Start FastAPI server with hot reload |
+| `make api` | Start FastAPI/GraphQL server with hot reload |
 | `make bot` | Start Discord bot |
-| `make frontend` | Start Next.js development server |
+| `make frontend` | Start Parcel development server |
+| `make dev` | Start all services in parallel |
+| `make db-up` | Start PostgreSQL database (Docker) |
+| `make db-down` | Stop PostgreSQL database |
+| `make db-reset` | Reset database (destroys all data) |
 | `make test` | Run all tests |
 | `make lint` | Run Ruff linter |
 | `make format` | Format code with Ruff |
 | `make generate` | Generate types from JSON Schema |
-| `make validate-schemas` | Validate JSON Schema files |
-| `make docker-up` | Start all services via Docker Compose |
-| `make docker-down` | Stop Docker Compose services |
 | `make clean` | Remove build artifacts and caches |
 
 ## Development Workflow
 
 ### Type Generation
 
-JSON Schema files in `shared/schemas/` are the source of truth. Generate types after schema changes:
+JSON Schema code generation has been removed. GraphQL is the source of truth for API contracts.
 
 ```bash
 make generate
@@ -153,7 +147,7 @@ make generate
 
 This generates:
 - Python Pydantic models → `backend/api/nonagon_api/generated/`
-- TypeScript types → `frontend/src/types/generated/`
+- TypeScript types → consider GraphQL codegen or handwritten types under `frontend/src/types/`
 
 ### Running Tests
 
@@ -193,11 +187,10 @@ Required bot permissions:
 
 ## API Documentation
 
-Interactive API docs are available at:
-- Swagger UI: [http://localhost:8000/docs](http://localhost:8000/docs)
-- ReDoc: [http://localhost:8000/redoc](http://localhost:8000/redoc)
+Interactive GraphQL playground is available at:
+- GraphQL Playground: [http://localhost:8000/graphql](http://localhost:8000/graphql)
 
-All API routes are guild-scoped: `/v1/guilds/{guild_id}/...`
+All GraphQL queries/mutations are guild-scoped via the `guildId` parameter.
 
 ## Contributing
 

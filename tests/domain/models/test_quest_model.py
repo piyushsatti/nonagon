@@ -1,8 +1,8 @@
 # tests/test_quest_model.py
 from datetime import datetime, timedelta
 import pytest
-from app.domain.models.QuestModel import Quest, QuestStatus
-from app.domain.models.EntityIDModel import UserID, CharacterID, QuestID
+from nonagon_bot.core.domain.models.QuestModel import Quest, QuestStatus
+from nonagon_bot.core.domain.models.EntityIDModel import UserID, CharacterID, QuestID
 
 
 def make_quest(now: datetime) -> Quest:

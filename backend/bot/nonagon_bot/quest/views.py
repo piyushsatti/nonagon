@@ -8,8 +8,8 @@ import discord
 
 from nonagon_bot.ui.wizards import send_ephemeral_message
 from nonagon_bot.utils.log_stream import send_demo_log
-from nonagon_core.domain.models.EntityIDModel import CharacterID, QuestID, UserID
-from nonagon_core.domain.models.QuestModel import PlayerSignUp, PlayerStatus, Quest
+from nonagon_bot.core.domain.models.EntityIDModel import CharacterID, QuestID, UserID
+from nonagon_bot.core.domain.models.QuestModel import PlayerSignUp, PlayerStatus, Quest
 
 if TYPE_CHECKING:
     from nonagon_bot.cogs.QuestCommandsCog import QuestCommandsCog
@@ -119,20 +119,27 @@ class QuestSignupView(discord.ui.View):
                 interaction,
                 "I can only look up characters inside a guild. Please run this from a server channel.",
             )
-        except QuestSignupView._ValidationError as exc:
-            await self._send_validation_error(interaction, str(exc))
             return
-
+        
+        member = interaction.user
+        
+        # Load characters from database
+        from nonagon_bot.core.infra.postgres.characters_repo import CharactersRepoPostgres
+        characters_repo = CharactersRepoPostgres()
+        user_id = UserID.from_body(str(member.id))
+        characters_list = await characters_repo.list_characters(interaction.guild.id, user_id)
+        characters_data = [(str(char.character_id), char.name) for char in characters_list]
+        
         class _EphemeralJoin(discord.ui.View):
             def __init__(
-                self, service: "QuestCommandsCog", quest_id: str, member: discord.Member
+                self, service: "QuestCommandsCog", quest_id: str, member: discord.Member, characters: list[tuple[str, str]]
             ):
                 super().__init__(timeout=60)
-                self.add_item(CharacterSelect(service, quest_id, member))
+                self.add_item(CharacterSelect(service, quest_id, member, characters))
 
         await interaction.response.send_message(
             "Select your character to request a spot:",
-            view=_EphemeralJoin(self.service, quest_id, member),
+            view=_EphemeralJoin(self.service, quest_id, member, characters_data),
             ephemeral=True,
         )
 
@@ -266,36 +273,16 @@ class QuestSignupView(discord.ui.View):
 
 
 class CharacterSelect(discord.ui.Select):
-    def __init__(self, service: "QuestCommandsCog", quest_id: str, member: discord.Member):
+    def __init__(self, service: "QuestCommandsCog", quest_id: str, member: discord.Member, characters: list[tuple[str, str]]):
         self.service = service
         self.quest_id = quest_id
         self.member = member
-        guild_entry = service.bot.guild_data.get(member.guild.id)
+        
         options: list[discord.SelectOption] = []
-        if guild_entry is not None:
-            db = guild_entry["db"]
-            owner_id = str(UserID.from_body(str(member.id)))
-            cursor = (
-                db["characters"]
-                .find(
-                    {"owner_id.value": owner_id},
-                    {"_id": 0, "character_id": 1, "name": 1},
-                )
-                .limit(25)
+        for char_id_str, char_name in characters[:25]:
+            options.append(
+                discord.SelectOption(label=f"{char_id_str} — {char_name}", value=char_id_str)
             )
-            for doc in cursor:
-                cid = doc.get("character_id", {})
-                if isinstance(cid, dict):
-                    if "value" in cid:
-                        label = cid["value"]
-                    else:
-                        label = f"{cid.get('prefix', 'CHAR')}{cid.get('number', '')}"
-                else:
-                    label = str(cid)
-                name = doc.get("name") or label
-                options.append(
-                    discord.SelectOption(label=f"{label} — {name}", value=label)
-                )
 
         super().__init__(
             placeholder="Choose your character…",

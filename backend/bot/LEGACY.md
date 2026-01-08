@@ -1,101 +1,65 @@
-# ⚠️ Legacy Notice: Discord Bot
+# ✅ Migration Complete: Discord Bot
 
-> **Status:** Legacy / Pending Migration  
+> **Status:** Migrated  
 > **Last Updated:** January 2026
 
 ## Overview
 
-The Discord bot (`nonagon_bot`) is currently **behind the main API migration** and requires future work to align with the new architecture.
+The Discord bot (`nonagon_bot`) has been migrated from MongoDB/REST to PostgreSQL/GraphQL.
 
-## Current State
+## Completed Changes
 
-The bot was designed to communicate with the backend via **REST API endpoints** at `QUEST_API_BASE_URL`. These REST endpoints have been **removed** in favor of the new **GraphQL API**.
+### Database Layer
+- ✅ Replaced `UsersRepoMongo` with `UsersRepoPostgres` in all cogs
+- ✅ Replaced `LookupRepoMongo` with `LookupRepoPostgres`
+- ✅ Created `infra/postgres/guild_adapter.py` for sync upsert operations
+- ✅ Bot uses psycopg2 for sync flush operations
 
-### Affected Components
+### API Communication
+- ✅ Added `services/graphql_client.py` with GraphQL mutations for quest operations
+- ✅ Removed `QUEST_API_BASE_URL` config (REST is deprecated)
+- ✅ Bot now uses `GRAPHQL_API_URL` for API calls
 
-| File | Issue |
-|------|-------|
-| `cogs/QuestCommandsCog.py` | Uses REST calls (`_signup_via_api`, `_remove_signup_via_api`, etc.) |
-| `config.py` | References `QUEST_API_BASE_URL` (deprecated) |
-| `database.py` | Uses direct MongoDB/PostgreSQL sync operations |
+### Removed Legacy Code
+- ✅ Removed `MONGO_URI` from config
+- ✅ Removed MongoDB imports from all cogs
+- ✅ Removed `to_bson`/`from_bson` serialization imports
 
-### REST Methods to Migrate
+## GraphQL Client Usage
 
-The following methods in `QuestCommandsCog.py` need to be updated:
-
-- `_signup_via_api()` → GraphQL `addQuestSignup` mutation
-- `_remove_signup_via_api()` → GraphQL `removeQuestSignup` mutation  
-- `_select_signup_via_api()` → GraphQL `selectQuestSignup` mutation
-- `_nudge_via_api()` → GraphQL `nudgeQuest` mutation
-- `_close_signups_via_api()` → GraphQL `closeQuestSignups` mutation
-
-## Migration Options
-
-### Option 1: GraphQL Client (Recommended)
-
-Use `gql` or `httpx` to call the GraphQL API:
+The bot can now use the GraphQL client for quest operations:
 
 ```python
-import httpx
+from nonagon_bot.services.graphql_client import (
+    signup_quest,
+    remove_signup,
+    select_signup,
+    nudge_quest,
+    close_signups,
+)
 
-GRAPHQL_URL = os.getenv("GRAPHQL_API_URL", "http://localhost:8000/graphql")
+# Add a signup
+await signup_quest(guild_id, quest_id, user_id, character_id)
 
-async def signup_via_graphql(guild_id: int, quest_id: str, user_id: str, character_id: str):
-    query = """
-    mutation AddSignup($guildId: Int!, $questId: String!, $input: QuestSignupInput!) {
-        addQuestSignup(guildId: $guildId, questId: $questId, input: $input) {
-            id
-            signups { userId characterId }
-        }
-    }
-    """
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            GRAPHQL_URL,
-            json={
-                "query": query,
-                "variables": {
-                    "guildId": guild_id,
-                    "questId": quest_id,
-                    "input": {"userId": user_id, "characterId": character_id}
-                }
-            }
-        )
-        return response.json()
+# Remove a signup
+await remove_signup(guild_id, quest_id, user_id)
+
+# Select/accept a signup
+await select_signup(guild_id, quest_id, user_id)
 ```
 
-### Option 2: Direct PostgreSQL Repository
+## Files Changed
 
-Import and use the PostgreSQL repositories directly (faster, no network hop):
-
-```python
-from nonagon_core.infra.postgres.quests_repo import QuestsRepository
-
-quests_repo = QuestsRepository()
-
-async def signup_direct(guild_id: int, quest_id: str, signup: QuestSignup):
-    quest = await quests_repo.get(guild_id, quest_id)
-    quest.signups.append(signup)
-    await quests_repo.upsert(quest)
-```
-
-## Future Work
-
-1. **Remove `QUEST_API_BASE_URL`** from `config.py`
-2. **Update `QuestCommandsCog.py`** to use GraphQL or direct repos
-3. **Update `database.py`** to use async PostgreSQL (`asyncpg`)
-4. **Add integration tests** for bot ↔ API communication
-5. **Update Docker compose** bot service environment variables
-
-## Timeline
-
-| Task | Priority | Estimate |
-|------|----------|----------|
-| Migrate quest signup flows | High | 2-3 hours |
-| Remove deprecated config | Medium | 30 min |
-| Add GraphQL client helper | Medium | 1 hour |
-| Update database layer | Low | 2-4 hours |
-
----
+| File | Change |
+|------|--------|
+| `cogs/QuestCommandsCog.py` | PostgreSQL repos + removed REST imports |
+| `cogs/SetupCommandsCog.py` | UsersRepoPostgres |
+| `cogs/CharacterCommandsCog.py` | Postgres guild_adapter |
+| `cogs/SummaryCommandsCog.py` | UsersRepoPostgres |
+| `cogs/LookupCommandsCog.py` | LookupRepoPostgres |
+| `main.py` | Postgres guild_adapter |
+| `services/user_registry.py` | UsersRepoPostgres |
+| `services/graphql_client.py` | New GraphQL client |
+| `config.py` | Removed MONGO_URI, QUEST_API_BASE_URL |
 
 *This bot remains functional via fallback to direct database writes, but should be migrated for consistency with the GraphQL-first architecture.*

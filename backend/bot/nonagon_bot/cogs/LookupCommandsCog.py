@@ -4,16 +4,14 @@ import asyncio
 import contextlib
 import math
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
-from nonagon_core.domain.models.LookupModel import LookupEntry
-from nonagon_core.domain.models.UserModel import User
-from nonagon_core.infra.mongo.lookup_repo import LookupRepoMongo
 from nonagon_bot.cogs._staff_utils import is_allowed_staff
+from nonagon_bot.services import graphql_client
 from nonagon_bot.utils.logging import get_logger
 
 
@@ -27,7 +25,6 @@ class LookupCommandsCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.repo = LookupRepoMongo()
         self._sync_task: Optional[asyncio.Task[None]] = None
 
     async def cog_load(self) -> None:
@@ -73,38 +70,20 @@ class LookupCommandsCog(commands.Cog):
         target = self._guild_object(guild.id)
         self.bot.tree.remove_command(self.lookup.name, type=self.lookup.type, guild=target)
 
-    async def _ensure_guild_cache(self, guild: discord.Guild) -> None:
-        if guild.id not in self.bot.guild_data:
-            await self.bot.load_or_create_guild_cache(guild)
-
-    async def _get_cached_user(self, member: discord.Member) -> User:
-        await self._ensure_guild_cache(member.guild)
-        guild_entry = self.bot.guild_data[member.guild.id]
-
-        user = guild_entry["users"].get(member.id)
-        if user is not None:
-            return user
-
-        listener: Optional[commands.Cog] = self.bot.get_cog("ListnerCog")
-        if listener is None:
-            raise RuntimeError("Listener cog not loaded; cannot resolve users.")
-
-        ensure_method = getattr(listener, "_ensure_cached_user", None)
-        if ensure_method is None:
-            raise RuntimeError("Listener cog missing _ensure_cached_user helper.")
-
-        user = await ensure_method(member)  # type: ignore[misc]
-        return user
+    async def _fetch_user(self, guild_id: int, discord_id: int) -> Optional[Dict[str, Any]]:
+        return await graphql_client.get_user_by_discord(guild_id, str(discord_id))
 
     async def _is_staff(self, member: discord.Member) -> bool:
         if is_allowed_staff(self.bot, member):
             return True
 
         try:
-            user = await self._get_cached_user(member)
+            user = await self._fetch_user(member.guild.id, member.id)
         except Exception:
             return False
-        return user.is_referee
+        if not user:
+            return False
+        return "REFEREE" in (user.get("roles") or [])
 
     async def _resolve_staff_member(self, interaction: discord.Interaction) -> Optional[discord.Member]:
         if interaction.guild is None:
@@ -145,41 +124,43 @@ class LookupCommandsCog(commands.Cog):
         await interaction.response.defer(ephemeral=True, thinking=True)
 
         guild_id = interaction.guild.id  # type: ignore[union-attr]
-        existing = await self.repo.get_by_name(guild_id, name)
+        existing = await graphql_client.get_lookup(guild_id, name)
 
-        now = datetime.now(timezone.utc)
-        if existing is None:
-            entry = LookupEntry(
-                guild_id=guild_id,
-                name=name.strip(),
+        saved: Optional[Dict[str, Any]]
+        if existing:
+            saved = await graphql_client.update_lookup(
+                guild_id,
+                name,
+                updated_by=member.id,
                 url=url.strip(),
-                created_by=member.id,
-                created_at=now,
                 description=description.strip() if description else None,
             )
+            action = "Updated"
         else:
-            entry = LookupEntry(
-                guild_id=guild_id,
+            saved = await graphql_client.create_lookup(
+                guild_id,
+                created_by=member.id,
                 name=name.strip(),
                 url=url.strip(),
-                created_by=existing.created_by,
-                created_at=existing.created_at,
-                description=description.strip() if description else existing.description,
+                description=description.strip() if description else None,
             )
+            action = "Stored"
 
-        entry.touch_updated(member.id, at=now)
-        saved = await self.repo.upsert(entry)
+        if saved is None:
+            await interaction.followup.send(
+                "API request failed while saving the lookup. Please try again later.",
+                ephemeral=True,
+            )
+            return
 
         logger.info(
             "Lookup entry saved (guild=%s staff=%s name=%s)",
             guild_id,
             member.id,
-            saved.name,
+            saved.get("name"),
         )
-
-        action = "Updated" if existing else "Stored"
         await interaction.followup.send(
-            f"{action} lookup `{saved.name}` → {saved.url}", ephemeral=True
+            f"{action} lookup `{saved.get('name')}` → {saved.get('url')}", ephemeral=True
         )
 
     @lookup.command(name="get", description="Retrieve a lookup entry")
@@ -191,7 +172,7 @@ class LookupCommandsCog(commands.Cog):
 
         await interaction.response.defer(ephemeral=True, thinking=True)
 
-        match = await self.repo.find_best_match(interaction.guild.id, query)  # type: ignore[union-attr]
+        match = await graphql_client.lookup_search(interaction.guild.id, query)  # type: ignore[union-attr]
         if match is None:
             await interaction.followup.send("No lookup entry matched that query.", ephemeral=True)
             return
@@ -206,7 +187,7 @@ class LookupCommandsCog(commands.Cog):
             return
 
         await interaction.response.defer(ephemeral=True, thinking=True)
-        entries = await self.repo.list_all(interaction.guild.id)  # type: ignore[union-attr]
+        entries = await graphql_client.list_all_lookups(interaction.guild.id)  # type: ignore[union-attr]
 
         if not entries:
             await interaction.followup.send("No lookup entries stored yet.", ephemeral=True)
@@ -224,7 +205,7 @@ class LookupCommandsCog(commands.Cog):
             return
 
         await interaction.response.defer(ephemeral=True, thinking=True)
-        deleted = await self.repo.delete(interaction.guild.id, name)  # type: ignore[union-attr]
+        deleted = await graphql_client.delete_lookup(interaction.guild.id, name)  # type: ignore[union-attr]
 
         if deleted:
             logger.info(
@@ -238,24 +219,25 @@ class LookupCommandsCog(commands.Cog):
             await interaction.followup.send(f"No lookup named `{name}` found.", ephemeral=True)
 
 
-def _build_lookup_embed(entry: LookupEntry) -> discord.Embed:
+def _build_lookup_embed(entry: Dict[str, Any]) -> discord.Embed:
     embed = discord.Embed(
-        title=entry.name,
-        description=entry.description or "",
+        title=entry.get("name", ""),
+        description=entry.get("description") or "",
         colour=discord.Color.teal(),
-        url=entry.url,
+        url=entry.get("url"),
     )
-    embed.add_field(name="Link", value=entry.url, inline=False)
+    if entry.get("url"):
+        embed.add_field(name="Link", value=entry["url"], inline=False)
 
     timestamps = []
-    last_updated = entry.updated_at or entry.created_at
-    if last_updated:
-        if last_updated.tzinfo is None:
-            last_updated = last_updated.replace(tzinfo=timezone.utc)
-        epoch = int(last_updated.timestamp())
-        actor = entry.updated_by or entry.created_by
-        actor_display = f"<@{actor}>" if actor else "Unknown"
-        timestamps.append(f"Updated by {actor_display} <t:{epoch}:R>")
+    stamp_iso = entry.get("updatedAt") or entry.get("createdAt")
+    if stamp_iso:
+        parsed = discord.utils.parse_time(stamp_iso)
+        if parsed:
+            epoch = int(parsed.replace(tzinfo=timezone.utc).timestamp())
+            actor = entry.get("updatedBy") or entry.get("createdBy")
+            actor_display = f"<@{actor}>" if actor else "Unknown"
+            timestamps.append(f"Updated by {actor_display} <t:{epoch}:R>")
 
     if timestamps:
         embed.add_field(name="Activity", value="\n".join(timestamps), inline=False)
@@ -264,7 +246,7 @@ def _build_lookup_embed(entry: LookupEntry) -> discord.Embed:
 
 
 class LookupListView(discord.ui.View):
-    def __init__(self, entries: List[LookupEntry], guild_name: str, *, per_page: int = 10):
+    def __init__(self, entries: List[Dict[str, Any]], guild_name: str, *, per_page: int = 10):
         super().__init__(timeout=120)
         self.entries = entries
         self.guild_name = guild_name
@@ -284,18 +266,17 @@ class LookupListView(discord.ui.View):
         end = start + self.per_page
         slice_entries = self.entries[start:end]
         for entry in slice_entries:
-            lines: List[str] = [entry.url]
-            stamp = entry.updated_at or entry.created_at
-            if stamp is not None:
-                if stamp.tzinfo is None:
-                    stamp = stamp.replace(tzinfo=timezone.utc)
-                epoch = int(stamp.timestamp())
-                actor = entry.updated_by or entry.created_by
+            lines: List[str] = [entry.get("url", "")] if entry.get("url") else []
+            stamp_iso = entry.get("updatedAt") or entry.get("createdAt")
+            parsed = discord.utils.parse_time(stamp_iso) if stamp_iso else None
+            if parsed is not None:
+                epoch = int(parsed.replace(tzinfo=timezone.utc).timestamp())
+                actor = entry.get("updatedBy") or entry.get("createdBy")
                 actor_display = f"<@{actor}>" if actor else "Unknown"
                 lines.append(f"Updated by {actor_display} <t:{epoch}:R>")
-            if entry.description:
-                lines.append(entry.description)
-            embed.add_field(name=entry.name, value="\n".join(lines), inline=False)
+            if entry.get("description"):
+                lines.append(entry["description"])
+            embed.add_field(name=entry.get("name", "(unnamed)"), value="\n".join(lines) or "—", inline=False)
 
         embed.set_footer(text=f"Page {self.page + 1} of {self._total_pages}")
         return embed

@@ -3,8 +3,8 @@
 import math
 import pytest
 from datetime import datetime
-from app.domain.models.UserModel import User, Player, Referee
-from app.domain.models.EntityIDModel import UserID, CharacterID, QuestID, SummaryID
+from nonagon_bot.core.domain.models.UserModel import User, Player, Referee
+from nonagon_bot.core.domain.models.EntityIDModel import UserID, CharacterID, QuestID, SummaryID
 
 
 def test_user_id_roundtrip():

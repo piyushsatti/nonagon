@@ -1,19 +1,14 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timezone
 from typing import Dict, Optional
 
 import discord
 from discord import app_commands
 from discord.ext import commands
-from pymongo.errors import PyMongoError
 
-from nonagon_bot.database import db_client
 from nonagon_bot.services import guild_settings_store
-from nonagon_core.domain.models.UserModel import User
-from nonagon_core.infra.mongo.guild_adapter import upsert_user_sync
-from nonagon_core.infra.mongo.users_repo import UsersRepoMongo
+from nonagon_bot.services import graphql_client
 from nonagon_bot.utils.logging import get_logger
 
 
@@ -29,7 +24,7 @@ class SetupCommandsCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
-        self.users_repo = UsersRepoMongo()
+        # No direct database repo; rely on API for persistence when needed.
 
     # ------------------------------------------------------------------ #
     # Shared helpers
@@ -386,36 +381,43 @@ class SetupCommandsCog(commands.Cog):
                 if has_tag:
                     tagged += 1
 
-                existing_user = await self.users_repo.get_by_discord_id(
+                existing = await graphql_client.get_user_by_discord(
                     guild.id, str(member.id)
                 )
-                if existing_user is None:
-                    user = User.from_member(member)
-                    created += 1
-                else:
-                    user = existing_user
-                    updated += 1
-                user.guild_id = guild.id
-                user.discord_id = str(member.id)
-                user.has_server_tag = has_tag
-                if member.joined_at:
-                    user.joined_at = member.joined_at
 
-                await asyncio.to_thread(upsert_user_sync, db_client, guild.id, user)
+                if existing:
+                    updated += 1
+                    continue
+
+                created_user = await graphql_client.create_user(
+                    guild.id,
+                    str(member.id),
+                    dm_channel_id=None,
+                    dm_opt_in=True,
+                    roles=None,
+                )
+
+                if created_user is None:
+                    await interaction.followup.send(
+                        "Failed to refresh members because the API request did not succeed. Please try again later.",
+                        ephemeral=True,
+                    )
+                    return
+
+                created += 1
         except (discord.Forbidden, discord.HTTPException) as exc:
             await interaction.followup.send(
                 f"Failed to fetch members: {exc}", ephemeral=True
             )
             return
-        except PyMongoError as exc:
+        except graphql_client.GraphQLError as exc:
             logger.exception(
-                "Failed to refresh guild cache for guild %s due to database error: %s",
+                "Failed to refresh guild members via GraphQL for guild %s: %s",
                 guild.id,
                 exc,
             )
             await interaction.followup.send(
-                "Unable to connect to the database while refreshing members. "
-                "Verify the MongoDB service is reachable and try again.",
+                "API request failed while refreshing members. Please try again later.",
                 ephemeral=True,
             )
             return

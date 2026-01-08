@@ -1,7 +1,7 @@
 import pytest
 from datetime import datetime, timedelta
-from app.domain.models.CharacterModel import Character, CharacterRole
-from app.domain.models.EntityIDModel import UserID, CharacterID, QuestID, SummaryID
+from nonagon_bot.core.domain.models.CharacterModel import Character, CharacterRole
+from nonagon_bot.core.domain.models.EntityIDModel import UserID, CharacterID, QuestID, SummaryID
 
 
 def make_character(now: datetime) -> Character:

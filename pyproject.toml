@@ -40,7 +40,7 @@ build-backend = "setuptools.build_meta"
 
 # Pytest configuration
 [tool.pytest.ini_options]
-pythonpath = ["backend/core", "backend/api", "backend/bot"]
+pythonpath = ["backend/api", "backend/bot"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
@@ -50,7 +50,7 @@ filterwarnings = [
 
 # Ruff linter configuration
 [tool.ruff]
-src = ["backend/core", "backend/api", "backend/bot"]
+src = ["backend/api", "backend/bot"]
 line-length = 120
 target-version = "py311"
 
@@ -59,11 +59,11 @@ select = ["E", "F", "W", "I"]
 ignore = ["E501"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["nonagon_core", "nonagon_api", "nonagon_bot"]
+known-first-party = ["nonagon_bot", "nonagon_api"]
 
 # Coverage configuration
 [tool.coverage.run]
-source = ["backend/core", "backend/api", "backend/bot"]
+source = ["backend/api", "backend/bot"]
 branch = true
 omit = ["*/generated/*", "*/__pycache__/*"]
 

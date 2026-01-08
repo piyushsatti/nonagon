@@ -10,8 +10,8 @@ import discord
 
 from nonagon_bot.services import guild_settings_store
 from nonagon_bot.utils.log_stream import send_demo_log
-from nonagon_core.domain.models.CharacterModel import Character, CharacterRole
-from nonagon_core.domain.models.EntityIDModel import CharacterID
+from nonagon_bot.core.domain.models.CharacterModel import Character, CharacterRole
+from nonagon_bot.core.domain.models.EntityIDModel import CharacterID
 
 from .utils import build_character_embed, build_character_embed_from_model
 
@@ -448,7 +448,6 @@ class CharacterCreationSession(CharacterSessionBase):
             character.onboarding_thread_id = thread.id
 
         self.cog._persist_character(self.guild.id, character)
-        await self.cog.bot.dirty_data.put((self.guild.id, self.member.id))
 
         summary_lines = [
             f"Character `{character.name}` (`{char_id}`) created!",

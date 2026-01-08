@@ -7,12 +7,6 @@ import discord
 from discord.ext import commands
 
 from nonagon_bot.utils.logging import get_logger
-from nonagon_core.infra.mongo.guild_adapter import upsert_user_sync
-from nonagon_core.infra.serialization import to_bson
-
-from nonagon_core.domain.models.UserModel import User
-from .config import BOT_FLUSH_VIA_ADAPTER, BOT_TOKEN
-from .database import db_client
 
 
 logger = get_logger(__name__)
@@ -28,8 +22,6 @@ class Nonagon(commands.Bot):
         super().__init__(
             command_prefix=commands.when_mentioned_or("n!"), intents=intents
         )
-        self.guild_data: dict[int, dict[str, Any]] = {}
-        self.dirty_data: asyncio.Queue[tuple[int, int]] = asyncio.Queue()
 
     # Called before the bot logins to discord
     async def setup_hook(self):
@@ -76,16 +68,11 @@ class Nonagon(commands.Bot):
             for ext, tb in failed.items():
                 logger.debug("Failed cog %s trace:\n%s", ext, tb)
 
-        try:
-            self.loop.create_task(self._auto_persist_loop())
-        except Exception as e:
-            logger.error("Auto persist loop encountered an error: %s", e)
-
         # Call the parent setup_hook to ensure all cogs are loaded
         await super().setup_hook()
 
     # Called to login and connect the bot to Discord
-    async def start(self, BOT_TOKEN):
+    async def start(self, bot_token: str):
         async def _idle_forever(reason_template: str, *args: Any) -> None:
             reason = reason_template % args if args else reason_template
             logger.error(
@@ -95,7 +82,7 @@ class Nonagon(commands.Bot):
             while True:
                 await asyncio.sleep(30)
 
-        normalized = (BOT_TOKEN or "").strip()
+        normalized = (bot_token or "").strip()
         placeholders = {"", "replace_me"}
 
         if normalized.lower() in placeholders:
@@ -113,102 +100,14 @@ class Nonagon(commands.Bot):
 
     # Called when the bot is ready
     async def on_ready(self):
-        await self._load_cache()
         tree_commands = [cmd.qualified_name for cmd in self.tree.get_commands()]
+        assert self.user is not None, "Bot user should be set when ready"
         logger.info("Logged in as %s (ID: %s)", self.user, self.user.id)
         logger.info("Loaded cogs: %s", ", ".join(sorted(self.cogs.keys())))
         logger.info("Slash commands: %s", ", ".join(sorted(tree_commands)))
 
     async def on_error(self, event_method, /, *args, **kwargs):
         await super().on_error(event_method, *args, **kwargs)
-
-    def _ensure_guild_entry(self, guild_id: int) -> dict[str, Any]:
-        defaults = {
-            "guild_id": guild_id,
-            "db": db_client.get_database(str(guild_id)),
-            "users": {},
-            "quests": {},
-            "characters": {},
-            "summaries": {},
-        }
-        entry = self.guild_data.setdefault(guild_id, defaults)
-        for key, value in defaults.items():
-            entry.setdefault(key, value)
-        entry["guild_id"] = guild_id
-        return entry
-
-    async def _load_cache(self):
-        logger.info("Loading guild caches…")
-        tasks = [self.load_or_create_guild_cache(g) for g in self.guilds]
-        await asyncio.gather(*tasks)
-        logger.info("All guild caches ready.")
-
-    async def _auto_persist_loop(self):
-        """Periodically flush *all* in-memory user caches back to MongoDB."""
-        while not self.is_closed():
-            await asyncio.sleep(15)
-            to_flush: dict[tuple[int, int], User] = {}
-            try:
-                while True:
-                    gid, uid = self.dirty_data.get_nowait()
-                    guild_entry = self.guild_data.get(gid)
-                    if guild_entry is None:
-                        logger.debug(
-                            "Skipping flush for gid=%s uid=%s (no guild cache)", gid, uid
-                        )
-                        continue
-                    user = guild_entry.get("users", {}).get(uid)
-                    if user is None:
-                        logger.debug(
-                            "Skipping flush for gid=%s uid=%s (user missing in cache)",
-                            gid,
-                            uid,
-                        )
-                        continue
-                    to_flush[(gid, uid)] = user
-            except asyncio.QueueEmpty:
-                pass
-
-            if not to_flush:
-                continue
-
-            for (gid, uid), user in to_flush.items():
-                guild_entry = self.guild_data.get(gid)
-                if guild_entry is None:
-                    logger.debug(
-                        "Skipping flush for gid=%s uid=%s (guild missing)", gid, uid
-                    )
-                    continue
-
-                try:
-                    user.guild_id = gid
-                    if BOT_FLUSH_VIA_ADAPTER:
-                        await asyncio.to_thread(upsert_user_sync, db_client, gid, user)
-                    else:
-                        db = guild_entry["db"]
-                        payload = to_bson(user)
-                        payload["guild_id"] = payload.get("guild_id") or gid
-                        await asyncio.to_thread(
-                            db.users.update_one,
-                            {
-                                "guild_id": payload["guild_id"],
-                                "user_id.value": str(user.user_id),
-                            },
-                            {"$set": payload},
-                            upsert=True,
-                        )
-                    logger.debug(
-                        "Persisted gid=%s uid=%s as user_id=%s", gid, uid, user.user_id
-                    )
-                except Exception as exc:  # pragma: no cover - defensive logging
-                    logger.exception(
-                        "Failed to persist gid=%s uid=%s user_id=%s: %s",
-                        gid,
-                        uid,
-                        user.user_id,
-                        exc,
-                    )
-            # Quietly completes; detailed logging is handled by exception paths above.
 
     async def _sync_application_commands(self) -> None:
         await self.wait_until_ready()
@@ -233,121 +132,3 @@ class Nonagon(commands.Bot):
                     )
         except Exception:
             logger.exception("Failed to sync application commands")
-
-    async def load_or_create_guild_cache(self, guild: discord.Guild) -> None:
-        db_name = f"{guild.id}"
-        entry = self._ensure_guild_entry(guild.id)
-        g_db = entry["db"]
-
-        if db_name in db_client.list_database_names():
-            logger.info("Loading cached users for %s", guild.name)
-            users: dict[int, User] = {}
-            found_with_guild = False
-            primary_cursor = g_db.users.find({"guild_id": guild.id}, {"_id": 0})
-            for doc in primary_cursor:
-                found_with_guild = True
-                user = User.from_dict(doc)
-                user.guild_id = guild.id
-                raw_key = doc.get("discord_id") or user.discord_id
-                if raw_key is None:
-                    logger.debug(
-                        "Skipping cached user with missing discord_id (guild=%s, user_id=%s)",
-                        guild.id,
-                        user.user_id,
-                    )
-                    continue
-                try:
-                    key = int(raw_key)
-                except (TypeError, ValueError):
-                    logger.debug(
-                        "Skipping cached user with non-numeric discord_id=%s (guild=%s, user_id=%s)",
-                        raw_key,
-                        guild.id,
-                        user.user_id,
-                    )
-                    continue
-                users[key] = user
-
-            if not found_with_guild:
-                legacy_cursor = g_db.users.find({}, {"_id": 0})
-                for doc in legacy_cursor:
-                    user = User.from_dict(doc)
-                    user.guild_id = guild.id
-                    raw_key = doc.get("discord_id") or user.discord_id
-                    if raw_key is None:
-                        logger.debug(
-                            "Skipping legacy user with missing discord_id (guild=%s, user_id=%s)",
-                            guild.id,
-                            user.user_id,
-                        )
-                        continue
-                    try:
-                        key = int(raw_key)
-                    except (TypeError, ValueError):
-                        logger.debug(
-                            "Skipping legacy user with non-numeric discord_id=%s (guild=%s, user_id=%s)",
-                            raw_key,
-                            guild.id,
-                            user.user_id,
-                        )
-                        continue
-                    users[key] = user
-
-            if users:
-                entry["users"] = users
-                self.guild_data[guild.id] = entry
-                return
-            # Fallback: DB exists but users collection is empty; scrape members
-            logger.info(
-                "No users found in DB for %s; scraping members as fallback", guild.name
-            )
-
-        logger.info(
-            "Scraping %s (%s members)...", guild.name, guild.member_count
-        )
-        snapshot: list[discord.Member] = list(guild.members)
-        users = {m.id: User.from_member(m) for m in snapshot if not m.bot}
-        for user in users.values():
-            user.guild_id = guild.id
-
-        entry["users"] = users
-        self.guild_data[guild.id] = entry
-
-        docs = []
-        for user in users.values():
-            payload = to_bson(user)
-            payload["guild_id"] = payload.get("guild_id") or guild.id
-            docs.append(payload)
-
-        if docs:
-            await asyncio.to_thread(entry["db"].users.insert_many, docs)
-
-        logger.info(
-            "Initial cache and DB created for %s - %d users", guild.name, len(users)
-        )
-
-
-if __name__ == "__main__":
-
-    logging.basicConfig(level=logging.INFO)
-
-    log_dir = Path("/app/logs")
-    try:
-        log_dir.mkdir(parents=True, exist_ok=True)
-    except Exception as exc:  # pragma: no cover - defensive logging
-        logger.warning("Unable to create log directory %s: %s", log_dir, exc)
-    else:
-        file_handler = logging.FileHandler(log_dir / "bot.log", mode="w")
-        file_handler.setLevel(logging.INFO)
-        file_handler.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
-        )
-        logging.getLogger().addHandler(file_handler)
-
-    intents = discord.Intents.default()
-    intents.message_content = True
-    intents.reactions = True
-    intents.members = True
-    intents.voice_states = True
-
-    asyncio.run(Nonagon(intents=intents).start(BOT_TOKEN))

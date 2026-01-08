@@ -1,7 +1,7 @@
 import pytest
 from datetime import datetime, timedelta
-from app.domain.models.SummaryModel import QuestSummary, SummaryKind
-from app.domain.models.EntityIDModel import UserID, CharacterID, QuestID, SummaryID
+from nonagon_bot.core.domain.models.SummaryModel import QuestSummary, SummaryKind
+from nonagon_bot.core.domain.models.EntityIDModel import UserID, CharacterID, QuestID, SummaryID
 
 
 def make_summary(now: datetime) -> QuestSummary:

@@ -10,8 +10,8 @@ from nonagon_bot.utils.quest_embeds import (
     QuestEmbedRoster,
     build_quest_embed as build_quest_embed_from_data,
 )
-from nonagon_core.domain.models.EntityIDModel import UserID
-from nonagon_core.domain.models.QuestModel import PlayerStatus, Quest
+from nonagon_bot.core.domain.models.EntityIDModel import UserID
+from nonagon_bot.core.domain.models.QuestModel import PlayerStatus, Quest
 
 UserDisplayResolver = Callable[[int, UserID], str]
 

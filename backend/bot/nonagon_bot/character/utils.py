@@ -5,7 +5,7 @@ from typing import List, Optional
 
 import discord
 
-from nonagon_core.domain.models.CharacterModel import Character, CharacterRole
+from nonagon_bot.core.domain.models.CharacterModel import Character, CharacterRole
 
 
 def status_label(status: CharacterRole) -> str:

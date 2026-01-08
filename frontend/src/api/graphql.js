@@ -1,7 +1,7 @@
 import { GraphQLClient, gql } from 'graphql-request';
 
-const GRAPHQL_ENDPOINT = process.env.NEXT_PUBLIC_API_URL 
-  ? `${process.env.NEXT_PUBLIC_API_URL}/graphql`
+const GRAPHQL_ENDPOINT = process.env.API_URL 
+  ? `${process.env.API_URL}/graphql`
   : 'http://localhost:8000/graphql';
 
 export const graphqlClient = new GraphQLClient(GRAPHQL_ENDPOINT);

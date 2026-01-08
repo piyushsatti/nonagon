@@ -8,9 +8,9 @@ import pytest
 import pytest_asyncio
 from discord.ext import commands
 
-from app.bot.cogs.QuestCommandsCog import QuestCommandsCog
-from app.domain.models.EntityIDModel import QuestID, UserID
-from app.domain.models.QuestModel import Quest
+from nonagon_bot.cogs.QuestCommandsCog import QuestCommandsCog
+from nonagon_bot.core.domain.models.EntityIDModel import QuestID, UserID
+from nonagon_bot.core.domain.models.QuestModel import Quest
 
 
 @pytest_asyncio.fixture

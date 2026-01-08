@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.domain.models.LookupModel import LookupEntry
+from nonagon_bot.core.domain.models.LookupModel import LookupEntry
 
 
 def test_normalize_name_collapses_whitespace() -> None:

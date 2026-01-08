@@ -14,9 +14,6 @@ DATABASE_URL = os.getenv(
 )
 DB_NAME = os.getenv("DB_NAME", "nonagon")
 
-# Legacy MongoDB URI (deprecated, kept for migration period)
-MONGO_URI = os.getenv("MONGO_URI", "")
-
 # Optional: use per-guild adapter for bot flush persistence
 BOT_FLUSH_VIA_ADAPTER = os.getenv("BOT_FLUSH_VIA_ADAPTER", "false").lower() in {
     "1",
@@ -24,11 +21,8 @@ BOT_FLUSH_VIA_ADAPTER = os.getenv("BOT_FLUSH_VIA_ADAPTER", "false").lower() in {
     "yes",
 }
 
-# GraphQL API endpoint (replaces REST)
+# GraphQL API endpoint
 GRAPHQL_API_URL = os.getenv("GRAPHQL_API_URL", "http://localhost:8000/graphql")
-
-# Legacy REST endpoint (deprecated)
-QUEST_API_BASE_URL = os.getenv("QUEST_API_BASE_URL")
 
 board_id_raw = os.getenv("QUEST_BOARD_CHANNEL_ID")
 try:

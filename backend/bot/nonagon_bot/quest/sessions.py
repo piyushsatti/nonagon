@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, Any, Dict, Literal, Optional, Type
 
 import discord
 
-from nonagon_core.domain.models.QuestModel import Quest, QuestStatus
-from nonagon_core.domain.models.UserModel import User
+from nonagon_bot.core.domain.models.QuestModel import Quest, QuestStatus
+from nonagon_bot.core.domain.models.UserModel import User
 
 from .embeds import build_quest_embed
 

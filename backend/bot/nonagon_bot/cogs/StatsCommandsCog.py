@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from nonagon_bot.utils.logging import get_logger
 from datetime import timezone
-from typing import Optional
+from typing import Optional, Tuple
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
-from nonagon_core.domain.models.UserModel import User
+from nonagon_bot.core.domain.models.UserModel import User
+from nonagon_bot.services import graphql_client
 
 
 logger = get_logger(__name__)
@@ -17,37 +18,26 @@ logger = get_logger(__name__)
 class StatsCommandsCog(commands.Cog):
     """Slash commands for engagement statistics."""
 
-    LEADERBOARD_FIELDS = {
-        "messages": ("messages_count_total", "Messages Sent"),
-        "reactions_given": ("reactions_given", "Reactions Given"),
-        "reactions_received": ("reactions_received", "Reactions Received"),
-        "voice": ("voice_total_time_spent", "Voice Time (hrs)"),
+    LEADERBOARD_FIELDS: dict[str, Tuple[str, str]] = {
+        "messages": ("messagesCountTotal", "Messages Sent"),
+        "reactions_given": ("reactionsGiven", "Reactions Given"),
+        "reactions_received": ("reactionsReceived", "Reactions Received"),
+        "voice": ("voiceTotalTimeSpent", "Voice Time (hrs)"),
     }
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    async def _ensure_guild_cache(self, guild: discord.Guild) -> None:
-        if guild.id not in self.bot.guild_data:
-            await self.bot.load_or_create_guild_cache(guild)
+    async def _fetch_user_stats(self, guild_id: int, discord_id: int) -> Optional[dict]:
+        return await graphql_client.get_user_by_discord(guild_id, str(discord_id))
 
     async def _get_cached_user(self, member: discord.Member) -> User:
-        await self._ensure_guild_cache(member.guild)
-        guild_entry = self.bot.guild_data[member.guild.id]
+        """Get user from database via UserRegistry."""
+        from nonagon_bot.services.user_registry import UserRegistry
 
-        user = guild_entry["users"].get(member.id)
-        if user is not None:
-            return user
-
-        listener: Optional[commands.Cog] = self.bot.get_cog("ListnerCog")
-        if listener is None:
-            raise RuntimeError("Listener cog not loaded; cannot resolve users.")
-
-        ensure_method = getattr(listener, "_ensure_cached_user", None)
-        if ensure_method is None:
-            raise RuntimeError("Listener cog missing _ensure_cached_user helper.")
-
-        user = await ensure_method(member)  # type: ignore[misc]
+        registry = UserRegistry()
+        user = await registry.ensure_member(member, member.guild.id)
+        user.guild_id = member.guild.id
         return user
 
     @app_commands.command(name="stats", description="View your engagement stats.")
@@ -65,12 +55,10 @@ class StatsCommandsCog(commands.Cog):
             )
             return
 
-        try:
-            user = await self._get_cached_user(member)
-        except RuntimeError as exc:
-            logger.exception("Failed to resolve user for stats: %s", exc)
+        user = await self._fetch_user_stats(member.guild.id, member.id)
+        if user is None:
             await interaction.response.send_message(
-                "Internal error resolving your profile; please try again later.",
+                "No profile found yet; try again after interacting in this server.",
                 ephemeral=True,
             )
             return
@@ -80,27 +68,34 @@ class StatsCommandsCog(commands.Cog):
             colour=discord.Color.gold(),
         )
         embed.add_field(
-            name="Messages", value=str(user.messages_count_total), inline=True
+            name="Messages", value=str(user.get("messagesCountTotal", 0)), inline=True
         )
         embed.add_field(
-            name="Reactions Given", value=str(user.reactions_given), inline=True
-        )
-        embed.add_field(
-            name="Reactions Received", value=str(user.reactions_received), inline=True
-        )
-        embed.add_field(
-            name="Voice Time (hrs)",
-            value=f"{user.voice_total_time_spent:.2f}",
+            name="Reactions Given",
+            value=str(user.get("reactionsGiven", 0)),
             inline=True,
         )
-        if user.last_active_at:
-            last_active = user.last_active_at
-            if last_active.tzinfo is None:
-                last_active = last_active.replace(tzinfo=timezone.utc)
-            else:
-                last_active = last_active.astimezone(timezone.utc)
-            epoch = int(last_active.timestamp())
-            embed.set_footer(text=f"Last active: <t:{epoch}:R>")
+        embed.add_field(
+            name="Reactions Received",
+            value=str(user.get("reactionsReceived", 0)),
+            inline=True,
+        )
+        voice_total = float(user.get("voiceTotalTimeSpent", 0.0) or 0.0)
+        embed.add_field(
+            name="Voice Time (hrs)",
+            value=f"{voice_total:.2f}",
+            inline=True,
+        )
+        last_active_iso = user.get("lastActiveAt")
+        if last_active_iso:
+            try:
+                # Discord embeds accept epoch seconds; parse ISO if present.
+                last_active_dt = discord.utils.parse_time(last_active_iso)
+                if last_active_dt is not None:
+                    epoch = int(last_active_dt.replace(tzinfo=timezone.utc).timestamp())
+                    embed.set_footer(text=f"Last active: <t:{epoch}:R>")
+            except Exception:
+                pass
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -127,22 +122,10 @@ class StatsCommandsCog(commands.Cog):
             )
             return
 
-        await self._ensure_guild_cache(interaction.guild)
-        guild_entry = self.bot.guild_data[interaction.guild.id]
-        db = guild_entry["db"]
-
         field, label = self.LEADERBOARD_FIELDS[metric.value]
-
-        cursor = (
-            db["users"]
-            .find(
-                {"guild_id": interaction.guild.id, field: {"$gt": 0}},
-                {"_id": 0, "discord_id": 1, field: 1},
-            )
-            .sort(field, -1)
-            .limit(10)
-        )
-        rows = list(cursor)
+        users = await graphql_client.list_users_by_guild(interaction.guild.id)
+        rows = [u for u in users if (u.get(field) or 0) > 0]
+        rows = sorted(rows, key=lambda u: u.get(field, 0), reverse=True)[:10]
 
         if not rows:
             await interaction.response.send_message(
@@ -157,17 +140,15 @@ class StatsCommandsCog(commands.Cog):
         )
 
         for idx, row in enumerate(rows, start=1):
-            discord_id = row.get("discord_id")
+            discord_id = row.get("discordId")
             member = (
-                interaction.guild.get_member(int(discord_id))
-                if discord_id is not None
-                else None
+                interaction.guild.get_member(int(discord_id)) if discord_id else None
             )
             display = (
                 member.display_name if member else f"User {discord_id}" or "Unknown"
             )
             value = row.get(field, 0)
-            if field == "voice_total_time_spent":
+            if field == "voiceTotalTimeSpent":
                 value = f"{float(value):.2f} hrs"
             embed.add_field(name=f"#{idx} {display}", value=str(value), inline=False)
 
@@ -212,7 +193,6 @@ class StatsCommandsCog(commands.Cog):
         enable = state.value == "enable"
         user.dm_opt_in = enable
 
-        await self.bot.dirty_data.put((interaction.guild.id, member.id))
         await interaction.response.send_message(
             f"DM reminders {'enabled' if enable else 'disabled'}.", ephemeral=True
         )

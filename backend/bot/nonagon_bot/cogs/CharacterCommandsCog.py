@@ -31,12 +31,12 @@ from nonagon_bot.ui.wizards import (
     validate_http_url,
     validate_length,
 )
-from nonagon_core.domain.models.CharacterModel import Character, CharacterRole
-from nonagon_core.domain.models.EntityIDModel import CharacterID, UserID
-from nonagon_core.domain.models.UserModel import User
-from nonagon_core.infra.mongo.guild_adapter import upsert_character_sync
+from nonagon_bot.core.domain.models.CharacterModel import Character, CharacterRole
+from nonagon_bot.core.domain.models.EntityIDModel import CharacterID, UserID
+from nonagon_bot.core.domain.models.UserModel import User
+from nonagon_bot.core.infra.postgres.guild_adapter import upsert_character_sync
+from nonagon_bot.core.infra.postgres.characters_repo import CharactersRepoPostgres
 from nonagon_bot.config import BOT_FLUSH_VIA_ADAPTER
-from nonagon_core.infra.serialization import from_bson, to_bson
 
 
 logger = get_logger(__name__)
@@ -52,29 +52,21 @@ class CharacterCommandsCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._active_dm_sessions: set[int] = set()
+        self._characters_repo = CharactersRepoPostgres()
 
     async def _fetch_character(
         self, guild: discord.Guild, raw_character_id: str
     ) -> Optional[Character]:
         await self._ensure_guild_cache(guild)
-        guild_entry = self.bot.guild_data[guild.id]
-        db = guild_entry["db"]
         try:
             normalized = str(CharacterID.parse(raw_character_id))
         except Exception:
             normalized = raw_character_id.strip().upper()
 
-        doc = db["characters"].find_one(
-            {"guild_id": guild.id, "character_id": normalized}
-        )
-        if doc is None:
-            doc = db["characters"].find_one(
-                {"guild_id": guild.id, "character_id.value": normalized}
-            )
-        if doc is None:
+        character = await self._characters_repo.get(guild.id, normalized)
+        if character is None:
             return None
 
-        character = from_bson(Character, doc)
         character.guild_id = guild.id
         if isinstance(character.tags, list):
             character.tags = [str(tag) for tag in character.tags]
@@ -165,29 +157,13 @@ class CharacterCommandsCog(commands.Cog):
 
         return note
 
-    async def _owned_character_docs(
+    async def _owned_characters(
         self, guild: discord.Guild, member: discord.Member
-    ) -> List[dict]:
+    ) -> List[Character]:
+        """Get all characters owned by a member in a guild."""
         await self._ensure_guild_cache(guild)
-        guild_entry = self.bot.guild_data[guild.id]
-        db = guild_entry["db"]
-        owner_id = str(UserID.from_body(str(member.id)))
-        cursor = db["characters"].find(
-            {
-                "guild_id": guild.id,
-                "owner_id.value": owner_id,
-            },
-            {
-                "_id": 0,
-                "character_id": 1,
-                "name": 1,
-                "ddb_link": 1,
-                "status": 1,
-                "announcement_channel_id": 1,
-                "announcement_message_id": 1,
-            },
-        )
-        return list(cursor)
+        owner_id = UserID.from_body(str(member.id))
+        return await self._characters_repo.list_by_owner(guild.id, owner_id)
 
     @staticmethod
     def _normalize_character_id(raw: object) -> str:
@@ -309,57 +285,23 @@ class CharacterCommandsCog(commands.Cog):
             base = f"[Retired] {base}"
         return base[:90]
 
-    async def _ensure_guild_cache(self, guild: discord.Guild) -> None:
-        if guild.id not in self.bot.guild_data:
-            await self.bot.load_or_create_guild_cache(guild)
-
     async def _get_cached_user(self, member: discord.Member) -> User:
-        await self._ensure_guild_cache(member.guild)
-        guild_entry = self.bot.guild_data[member.guild.id]
-
-        user = guild_entry["users"].get(member.id)
-        if user is not None:
-            return user
-
-        listener: Optional[commands.Cog] = self.bot.get_cog("ListnerCog")
-        if listener is None:
-            raise RuntimeError("Listener cog not loaded; cannot resolve users.")
-
-        ensure_method = getattr(listener, "_ensure_cached_user", None)
-        if ensure_method is None:
-            raise RuntimeError("Listener cog missing _ensure_cached_user helper.")
-
-        user = await ensure_method(member)  # type: ignore[misc]
+        """Get user from database via UserRegistry."""
+        from nonagon_bot.services.user_registry import UserRegistry
+        registry = UserRegistry()
+        user = await registry.ensure_member(member, member.guild.id)
+        user.guild_id = member.guild.id
         return user
 
-    def _next_character_id(self, guild_id: int) -> CharacterID:
-        guild_entry = self.bot.guild_data[guild_id]
-        db = guild_entry["db"]
-        coll = db["characters"]
-        while True:
-            candidate = CharacterID.generate()
-            exists = coll.count_documents(
-                {"guild_id": guild_id, "character_id": str(candidate)}, limit=1
-            )
-            if not exists:
-                return candidate
+    async def _next_character_id(self, guild_id: int) -> CharacterID:
+        """Generate a new unique CharacterID using the PostgreSQL repo."""
+        char_id_str = await self._characters_repo.next_id(guild_id)
+        return CharacterID.parse(char_id_str)
 
     def _persist_character(self, guild_id: int, character: Character) -> None:
-        if BOT_FLUSH_VIA_ADAPTER:
-            from nonagon_bot.database import db_client
-            upsert_character_sync(db_client, guild_id, character)
-            return
-        guild_entry = self.bot.guild_data[guild_id]
-        db = guild_entry["db"]
+        """Persist a character using the sync adapter (for flush loop)."""
         character.guild_id = guild_id
-        doc = to_bson(character)
-        doc["guild_id"] = guild_id
-        doc["character_id"] = str(character.character_id)
-        db["characters"].update_one(
-            {"guild_id": guild_id, "character_id": str(character.character_id)},
-            {"$set": doc},
-            upsert=True,
-        )
+        upsert_character_sync(guild_id, character)
 
     @character.command(
         name="create",
@@ -438,7 +380,7 @@ class CharacterCommandsCog(commands.Cog):
             )
             return
 
-        characters = await self._owned_character_docs(interaction.guild, member)
+        characters = await self._owned_characters(interaction.guild, member)
 
         if not characters:
             await interaction.response.send_message(
@@ -451,13 +393,13 @@ class CharacterCommandsCog(commands.Cog):
             title=f"{member.display_name}'s Characters",
             colour=discord.Color.green(),
         )
-        for doc in characters:
-            char_id = self._normalize_character_id(doc.get("character_id"))
-            status_value = doc.get("status") or CharacterRole.ACTIVE.value
+        for char in characters:
+            char_id = str(char.character_id)
+            status_value = char.status.value if hasattr(char.status, 'value') else char.status
             status_prefix = "[Retired] " if status_value != CharacterRole.ACTIVE.value else ""
             embed.add_field(
-                name=f"{status_prefix}{char_id} — {doc.get('name', 'Unnamed')}",
-                value=doc.get("ddb_link", "No sheet link"),
+                name=f"{status_prefix}{char_id} — {char.name or 'Unnamed'}",
+                value=char.ddb_link or "No sheet link",
                 inline=False,
             )
 
@@ -683,15 +625,15 @@ class CharacterCommandsCog(commands.Cog):
         if interaction.guild is None or not isinstance(interaction.user, discord.Member):
             return []
         try:
-            docs = await self._owned_character_docs(interaction.guild, interaction.user)
+            characters = await self._owned_characters(interaction.guild, interaction.user)
         except Exception:
             return []
 
         current_lower = current.lower()
         choices: List[app_commands.Choice[str]] = []
-        for doc in docs:
-            char_id = self._normalize_character_id(doc.get("character_id"))
-            name = doc.get("name", "Unnamed")
+        for char in characters:
+            char_id = str(char.character_id)
+            name = char.name or "Unnamed"
             display = f"{name} ({char_id})"
             if current_lower and current_lower not in display.lower():
                 continue
@@ -1410,7 +1352,7 @@ class CharacterTagsModal(
         if not user.is_player:
             user.enable_player()
 
-        char_id = self.cog._next_character_id(self.guild.id)
+        char_id = await self.cog._next_character_id(self.guild.id)
         description = self._normalize_optional(self.draft.description)
         notes = self._normalize_optional(self.draft.notes)
         tags = list(self.draft.tags)
@@ -1492,7 +1434,6 @@ class CharacterTagsModal(
             character.onboarding_thread_id = thread.id
 
         self.cog._persist_character(self.guild.id, character)
-        await self.cog.bot.dirty_data.put((self.guild.id, self.member.id))
 
         summary_lines = [
             f"Character `{character.name}` (`{char_id}`) created!",

@@ -14,7 +14,6 @@ from discord.ext import commands
 
 from nonagon_bot.config import (
     BOT_FLUSH_VIA_ADAPTER,
-    QUEST_API_BASE_URL,
     QUEST_BOARD_CHANNEL_ID,
 )
 from nonagon_bot.quest import build_nudge_embed, build_quest_embed
@@ -36,12 +35,13 @@ from nonagon_bot.utils.quest_embeds import (
     build_quest_embed,
 )
 from nonagon_bot.cogs._staff_utils import is_allowed_staff
-from nonagon_core.domain.models.EntityIDModel import CharacterID, EntityID, QuestID, UserID
-from nonagon_core.domain.models.QuestModel import PlayerSignUp, PlayerStatus, Quest, QuestStatus
-from nonagon_core.domain.models.UserModel import User
-from nonagon_core.infra.mongo.guild_adapter import upsert_quest_sync
-from nonagon_core.infra.mongo.users_repo import UsersRepoMongo
-from nonagon_core.infra.serialization import to_bson
+from nonagon_bot.core.domain.models.EntityIDModel import CharacterID, EntityID, QuestID, UserID
+from nonagon_bot.core.domain.models.QuestModel import PlayerSignUp, PlayerStatus, Quest, QuestStatus
+from nonagon_bot.core.domain.models.UserModel import User
+from nonagon_bot.core.infra.postgres.guild_adapter import upsert_quest_sync
+from nonagon_bot.core.infra.postgres.users_repo import UsersRepoPostgres
+from nonagon_bot.core.infra.postgres.quests_repo import QuestsRepoPostgres
+from nonagon_bot.core.infra.postgres.characters_repo import CharactersRepoPostgres
 
 
 logger = get_logger(__name__)
@@ -57,7 +57,9 @@ class QuestCommandsCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._demo_log = logger.audit
-        self._users_repo = UsersRepoMongo()
+        self._users_repo = UsersRepoPostgres()
+        self._quests_repo = QuestsRepoPostgres()
+        self._characters_repo = CharactersRepoPostgres()
         self._active_quest_sessions: set[int] = set()
         self._quest_scheduler_task: Optional[asyncio.Task[None]] = None
 
@@ -78,24 +80,21 @@ class QuestCommandsCog(commands.Cog):
 
     # ---------- Quest Embed Helpers ----------
 
-    def lookup_user_display(self, guild_id: int, user_id: UserID) -> str:
-        guild_entry = self.bot.guild_data.get(guild_id)
-        if guild_entry:
-            for cached in guild_entry.get("users", {}).values():
-                try:
-                    if cached.user_id == user_id:
-                        if cached.discord_id:
-                            return f"<@{cached.discord_id}>"
-                        return str(cached.user_id)
-                except AttributeError:
-                    continue
+    async def lookup_user_display(self, guild_id: int, user_id: UserID) -> str:
+        """Look up user display name from database."""
+        try:
+            user = await self._users_repo.get(guild_id, user_id)
+            if user and user.discord_id:
+                return f"<@{user.discord_id}>"
+        except Exception:
+            pass
         return str(user_id)
 
-    def _lookup_user_display(self, guild_id: int, user_id: UserID) -> str:
-        return self.lookup_user_display(guild_id, user_id)
+    async def _lookup_user_display(self, guild_id: int, user_id: UserID) -> str:
+        return await self.lookup_user_display(guild_id, user_id)
 
-    def _format_signup_label(self, guild_id: int, signup: PlayerSignUp) -> str:
-        user_display = self.lookup_user_display(guild_id, signup.user_id)
+    async def _format_signup_label(self, guild_id: int, signup: PlayerSignUp) -> str:
+        user_display = await self.lookup_user_display(guild_id, signup.user_id)
         return f"{user_display} — {str(signup.character_id)}"
 
     async def _resolve_board_channel(
@@ -256,10 +255,6 @@ class QuestCommandsCog(commands.Cog):
                 exc,
             )
 
-    async def _ensure_guild_cache(self, guild: discord.Guild) -> None:
-        if guild.id not in self.bot.guild_data:
-            await self.bot.load_or_create_guild_cache(guild)
-
     async def _quest_schedule_loop(self) -> None:
         await self.bot.wait_until_ready()
         while not self.bot.is_closed():
@@ -273,29 +268,15 @@ class QuestCommandsCog(commands.Cog):
         now = datetime.now(timezone.utc)
         for guild in list(self.bot.guilds):
             await self._ensure_guild_cache(guild)
-            guild_entry = self.bot.guild_data.get(guild.id)
-            if not guild_entry:
+            try:
+                pending_quests = await self._quests_repo.list_pending_announce(guild.id, now)
+            except Exception:
+                logger.exception(
+                    "Failed to fetch pending quests for guild %s", guild.id
+                )
                 continue
-            db = guild_entry["db"]
-            cursor = db["quests"].find(
-                {
-                    "guild_id": guild.id,
-                    "announce_at": {"$lte": now},
-                    "$or": [
-                        {"channel_id": {"$exists": False}},
-                        {"channel_id": None},
-                        {"channel_id": ""},
-                    ],
-                },
-            )
-            for doc in cursor:
-                try:
-                    quest = self._quest_from_doc(guild.id, doc)
-                except Exception:
-                    logger.exception(
-                        "Failed to deserialize quest doc for guild %s", guild.id
-                    )
-                    continue
+            
+            for quest in pending_quests:
                 if quest.status not in (QuestStatus.DRAFT, QuestStatus.ANNOUNCED):
                     continue
                 if quest.channel_id and quest.message_id:
@@ -312,30 +293,18 @@ class QuestCommandsCog(commands.Cog):
                     )
 
     async def _get_cached_user(self, member: discord.Member) -> User:
-        await self._ensure_guild_cache(member.guild)
-        guild_entry = self.bot.guild_data[member.guild.id]
-
-        user = guild_entry["users"].get(member.id)
-        if user is not None:
-            return user
-
-        listener: Optional[commands.Cog] = self.bot.get_cog("ListnerCog")
-        if listener is None:
-            raise RuntimeError("Listener cog not loaded; cannot resolve users.")
-
-        # Reuse listener helper to ensure cache consistency
-        ensure_method = getattr(listener, "_ensure_cached_user", None)
-        if ensure_method is None:
-            raise RuntimeError("Listener cog missing _ensure_cached_user helper.")
-
-        user = await ensure_method(member)  # type: ignore[misc]
+        """Get user from database via UserRegistry."""
+        from nonagon_bot.services.user_registry import UserRegistry
+        registry = UserRegistry()
+        user = await registry.ensure_member(member, member.guild.id)
+        user.guild_id = member.guild.id
         return user
 
     async def _resolve_member_for_user_id(
         self, guild: discord.Guild, user_id: UserID
     ) -> Optional[discord.Member]:
-        await self._ensure_guild_cache(guild)
-        guild_entry = self.bot.guild_data.get(guild.id)
+        # Get user from database
+        user = await self._users_repo.get(guild.id, user_id)
         def _coerce_discord_id(raw: object) -> int | None:
             if isinstance(raw, int):
                 return raw
@@ -347,7 +316,7 @@ class QuestCommandsCog(commands.Cog):
 
         candidate_ids: set[int] = set()
 
-        if guild_entry:
+        if user and user.discord_id:
             users = guild_entry.get("users", {})
             for cached_discord_id, cached_user in users.items():
                 try:
@@ -406,38 +375,15 @@ class QuestCommandsCog(commands.Cog):
             return self._parse_entity_id(cls, fallback)
         raise ValueError(f"Unable to parse {cls.__name__} from payload={payload!r}")
 
-    def _next_quest_id(self, guild_id: int) -> QuestID:
-        guild_entry = self.bot.guild_data[guild_id]
-        db = guild_entry["db"]
-        coll = db["quests"]
-        while True:
-            candidate = QuestID.generate()
-            exists = coll.count_documents(
-                {"guild_id": guild_id, "quest_id.value": str(candidate)}, limit=1
-            )
-            if not exists:
-                return candidate
-
-    def _quest_to_doc(self, quest: Quest) -> dict:
-        doc = to_bson(quest)
-        doc["guild_id"] = quest.guild_id
-        return doc
+    async def _next_quest_id(self, guild_id: int) -> QuestID:
+        """Generate a new unique QuestID using the PostgreSQL repo."""
+        quest_id_str = await self._quests_repo.next_id(guild_id)
+        return QuestID.parse(quest_id_str)
 
     def _persist_quest(self, guild_id: int, quest: Quest) -> None:
-        if BOT_FLUSH_VIA_ADAPTER:
-            from nonagon_bot.database import db_client
-
-            upsert_quest_sync(db_client, guild_id, quest)
-            return
-        guild_entry = self.bot.guild_data[guild_id]
-        db = guild_entry["db"]
+        """Persist a quest using the sync adapter (for flush loop)."""
         quest.guild_id = guild_id
-        payload = self._quest_to_doc(quest)
-        db["quests"].update_one(
-            {"guild_id": guild_id, "quest_id.value": str(quest.quest_id)},
-            {"$set": payload},
-            upsert=True,
-        )
+        upsert_quest_sync(guild_id, quest)
 
     async def _persist_quest_via_api(self, guild: discord.Guild, quest: Quest) -> bool:
         if not QUEST_API_BASE_URL:
@@ -857,24 +803,9 @@ class QuestCommandsCog(commands.Cog):
         quest.signups = signups
         return quest
 
-    def _fetch_quest(self, guild_id: int, quest_id: QuestID) -> Optional[Quest]:
-        guild_entry = self.bot.guild_data[guild_id]
-        db = guild_entry["db"]
-        doc = db["quests"].find_one(
-            {
-                "guild_id": guild_id,
-                "quest_id.value": str(quest_id),
-            }
-        )
-        if doc is None:
-            doc = db["quests"].find_one(
-                {
-                    "quest_id.value": str(quest_id),
-                }
-            )
-            if doc is None:
-                return None
-        return self._quest_from_doc(guild_id, doc)
+    async def _fetch_quest(self, guild_id: int, quest_id: QuestID) -> Optional[Quest]:
+        """Fetch a quest from the PostgreSQL database."""
+        return await self._quests_repo.get(guild_id, str(quest_id))
 
     async def quest_id_autocomplete(
         self, interaction: discord.Interaction, current: str
@@ -882,33 +813,19 @@ class QuestCommandsCog(commands.Cog):
         if interaction.guild is None:
             return []
         await self._ensure_guild_cache(interaction.guild)
-        db = self.bot.guild_data[interaction.guild.id]["db"]
-        cursor = (
-            db["quests"]
-            .find(
-                {
-                    "$or": [
-                        {"guild_id": interaction.guild.id},
-                        {"guild_id": {"$exists": False}},
-                    ]
-                },
-                {"_id": 0, "quest_id": 1, "title": 1, "starting_at": 1},
-            )
-            .sort("starting_at", -1)
-            .limit(20)
-        )
+        try:
+            quests = await self._quests_repo.list_recent(interaction.guild.id, limit=20)
+        except Exception:
+            return []
+        
         choices: list[app_commands.Choice[str]] = []
         term = (current or "").upper()
-        for doc in cursor:
-            qid = doc.get("quest_id", {})
-            if isinstance(qid, dict):
-                label = qid.get("value") or f"{qid.get('prefix', 'QUES')}{qid.get('number', '')}"
-            else:
-                label = str(qid)
+        for quest in quests:
+            label = str(quest.quest_id)
             if term and term not in label:
                 continue
-            title = doc.get("title") or label
-            choices.append(app_commands.Choice(name=f"{label} — {title}", value=label))
+            title = quest.title or label
+            choices.append(app_commands.Choice(name=f"{label} — {title}"[:100], value=label))
         return choices[:25]
 
     async def character_id_autocomplete(
@@ -919,30 +836,22 @@ class QuestCommandsCog(commands.Cog):
         ):
             return []
         await self._ensure_guild_cache(interaction.guild)
-        db = self.bot.guild_data[interaction.guild.id]["db"]
-        cursor = (
-            db["characters"]
-            .find(
-                {
-                    "guild_id": interaction.guild.id,
-                    "owner_id.value": str(UserID.from_body(str(interaction.user.id))),
-                },
-                {"_id": 0, "character_id": 1, "name": 1},
+        try:
+            owner_id = UserID.from_body(str(interaction.user.id))
+            characters = await self._characters_repo.list_by_owner(
+                interaction.guild.id, owner_id
             )
-            .limit(20)
-        )
+        except Exception:
+            return []
+        
         term = (current or "").upper()
         choices: list[app_commands.Choice[str]] = []
-        for doc in cursor:
-            cid = doc.get("character_id", {})
-            if isinstance(cid, dict):
-                label = cid.get("value") or f"{cid.get('prefix', 'CHAR')}{cid.get('number', '')}"
-            else:
-                label = str(cid)
+        for char in characters:
+            label = str(char.character_id)
             if term and term not in label:
                 continue
-            name = doc.get("name") or label
-            choices.append(app_commands.Choice(name=f"{label} — {name}", value=label))
+            name = char.name or label
+            choices.append(app_commands.Choice(name=f"{label} — {name}"[:100], value=label))
         return choices[:25]
 
     @staticmethod
@@ -990,7 +899,7 @@ class QuestCommandsCog(commands.Cog):
         if not user.is_referee:
             raise ValueError("Only referees can nudge quests.")
 
-        quest = self._fetch_quest(guild.id, quest_id)
+        quest = await self._fetch_quest(guild.id, quest_id)
         if quest is None:
             raise ValueError("Quest not found.")
 
@@ -1030,7 +939,7 @@ class QuestCommandsCog(commands.Cog):
 
         nudge_timestamp = now
         if via_api:
-            refreshed = self._fetch_quest(guild.id, quest_id)
+            refreshed = await self._fetch_quest(guild.id, quest_id)
             if refreshed is not None:
                 quest = refreshed
                 nudge_timestamp = quest.last_nudged_at or now
@@ -1118,7 +1027,7 @@ class QuestCommandsCog(commands.Cog):
         if not user.is_character_owner(character_id):
             raise ValueError("You can only join with characters you own.")
 
-        quest = self._fetch_quest(guild.id, quest_id)
+        quest = await self._fetch_quest(guild.id, quest_id)
         if quest is None:
             raise ValueError("Quest not found.")
 
@@ -1141,7 +1050,7 @@ class QuestCommandsCog(commands.Cog):
 
             self._persist_quest(guild.id, quest)
         else:
-            refreshed = self._fetch_quest(guild.id, quest_id)
+            refreshed = await self._fetch_quest(guild.id, quest_id)
             if refreshed is not None:
                 quest = refreshed
 
@@ -1177,7 +1086,7 @@ class QuestCommandsCog(commands.Cog):
         if not isinstance(member, discord.Member):
             raise ValueError("Only guild members can leave quests.")
 
-        quest = self._fetch_quest(guild.id, quest_id)
+        quest = await self._fetch_quest(guild.id, quest_id)
         if quest is None:
             raise ValueError("Quest not found.")
 
@@ -1195,7 +1104,7 @@ class QuestCommandsCog(commands.Cog):
                 raise ValueError(str(exc)) from exc
             self._persist_quest(guild.id, quest)
         else:
-            refreshed = self._fetch_quest(guild.id, quest_id)
+            refreshed = await self._fetch_quest(guild.id, quest_id)
             if refreshed is not None:
                 quest = refreshed
 
@@ -1257,12 +1166,10 @@ class QuestCommandsCog(commands.Cog):
             if member is None:
                 continue
 
-            user_record = (
-                self.bot.guild_data.get(guild.id, {})
-                .get("users", {})
-                .get(member.id)
-            )
-            if user_record is not None and not getattr(user_record, "dm_opt_in", True):
+            # Check user's dm_opt_in preference from database
+            user_id_for_member = UserID.from_body(str(member.id))
+            user_record = await self._users_repo.get(guild.id, user_id_for_member)
+            if user_record is not None and not user_record.dm_opt_in:
                 continue
 
             try:
@@ -1291,7 +1198,7 @@ class QuestCommandsCog(commands.Cog):
         return await self._get_cached_user(member)
 
     def fetch_quest(self, guild_id: int, quest_id: QuestID) -> Optional[Quest]:
-        return self._fetch_quest(guild_id, quest_id)
+        return await self._fetch_quest(guild_id, quest_id)
 
     def format_signup_label(self, guild_id: int, signup: PlayerSignUp) -> str:
         return self._format_signup_label(guild_id, signup)
@@ -1673,7 +1580,7 @@ class QuestCommandsCog(commands.Cog):
             await interaction.followup.send(str(exc), ephemeral=True)
             return
 
-        quest = self._fetch_quest(interaction.guild.id, quest_id_obj)
+        quest = await self._fetch_quest(interaction.guild.id, quest_id_obj)
         if quest is None:
             await interaction.followup.send("Quest not found.", ephemeral=True)
             return
@@ -1739,7 +1646,7 @@ class QuestCommandsCog(commands.Cog):
             await interaction.followup.send(str(exc), ephemeral=True)
             return
 
-        existing = self._fetch_quest(interaction.guild.id, quest_id)
+        existing = await self._fetch_quest(interaction.guild.id, quest_id)
         if existing is None:
             await interaction.followup.send("Quest not found.", ephemeral=True)
             return
@@ -1825,7 +1732,7 @@ class QuestCommandsCog(commands.Cog):
             await interaction.response.send_message(str(exc), ephemeral=True)
             return
 
-        existing = self._fetch_quest(interaction.guild.id, quest_id)
+        existing = await self._fetch_quest(interaction.guild.id, quest_id)
         if existing is None:
             await interaction.response.send_message("Quest not found.", ephemeral=True)
             return
@@ -2035,7 +1942,7 @@ class QuestCommandsCog(commands.Cog):
             await interaction.followup.send(str(exc), ephemeral=True)
             return
 
-        quest = self._fetch_quest(interaction.guild.id, quest_id_obj)
+        quest = await self._fetch_quest(interaction.guild.id, quest_id_obj)
         if quest is None:
             await interaction.followup.send("Quest not found.", ephemeral=True)
             return
@@ -2122,7 +2029,7 @@ class QuestCommandsCog(commands.Cog):
             await interaction.followup.send(str(exc), ephemeral=True)
             return
 
-        quest = self._fetch_quest(interaction.guild.id, quest_id_obj)
+        quest = await self._fetch_quest(interaction.guild.id, quest_id_obj)
         if quest is None:
             await interaction.followup.send("Quest not found.", ephemeral=True)
             return
@@ -2789,7 +2696,7 @@ class QuestCreationSession(QuestSessionBase):
         super().__init__(cog, guild, member, user, dm_channel)
 
     async def run(self) -> QuestCreationResult:
-        quest_id = self.cog._next_quest_id(self.guild.id)
+        quest_id = await self.cog._next_quest_id(self.guild.id)
         quest = Quest(
             quest_id=quest_id,
             guild_id=self.guild.id,

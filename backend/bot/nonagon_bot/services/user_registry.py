@@ -6,27 +6,39 @@ from typing import Callable, Optional
 
 from discord import Member
 
-from nonagon_core.domain.models.EntityIDModel import UserID
-from nonagon_core.domain.models.UserModel import Role, User
-from nonagon_core.infra.mongo.users_repo import UsersRepoMongo
+from nonagon_bot.core.domain.models.EntityIDModel import UserID
+from nonagon_bot.core.domain.models.UserModel import Role, User
+from nonagon_bot.services import graphql_client
 
 
 class UserRegistry:
     """Adapter that keeps domain users in sync with Discord members.
 
-    The registry wraps the Mongo-backed repo so the bot can create or fetch
-    user records during gateway events without duplicating ID allocation or
-    validation logic throughout the codebase.
+    The registry is backed by the GraphQL API so the bot can create or fetch
+    user records during gateway events without direct DB access.
     """
 
     def __init__(
         self,
-        users_repo: Optional[UsersRepoMongo] = None,
         *,
         clock: Optional[Callable[[], datetime]] = None,
     ) -> None:
-        self._users_repo = users_repo or UsersRepoMongo()
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+
+    def _from_gql_user(self, payload: dict, *, joined_at: Optional[datetime] = None) -> User:
+        roles = [Role(r) for r in (payload.get("roles") or []) if r]
+        if not roles:
+            roles = [Role.MEMBER]
+        return User(
+            user_id=UserID.parse(payload["userId"]),
+            guild_id=int(payload["guildId"]),
+            discord_id=payload.get("discordId"),
+            dm_channel_id=payload.get("dmChannelId"),
+            roles=roles,
+            dm_opt_in=bool(payload.get("dmOptIn", True)),
+            joined_at=joined_at or self._clock(),
+            last_active_at=payload.get("lastActiveAt") or joined_at or self._clock(),
+        )
 
     async def ensure_member(
         self, member: Member, guild_id: Optional[int] = None
@@ -40,16 +52,31 @@ class UserRegistry:
             raise ValueError("Guild id is required to ensure a member record")
 
         discord_id = str(member.id)
-        existing = await self._users_repo.get_by_discord_id(
+        existing = await graphql_client.get_user_by_discord(
             int(resolved_guild_id), discord_id
         )
         if existing:
-            if existing.guild_id != resolved_guild_id:
-                existing.guild_id = resolved_guild_id
-            return existing
+            return self._from_gql_user(existing, joined_at=member.joined_at)
 
+        created = await graphql_client.create_user(
+            int(resolved_guild_id),
+            discord_id,
+            dm_channel_id=None,
+            dm_opt_in=True,
+            roles=None,
+        )
+        if created:
+            return self._from_gql_user(
+                {
+                    **created,
+                    "guildId": int(resolved_guild_id),
+                    "discordId": discord_id,
+                },
+                joined_at=member.joined_at,
+            )
+
+        # Fallback to a minimal in-memory user if API is unreachable.
         joined_at = member.joined_at or self._clock()
-
         user = User(
             user_id=UserID.from_body(str(member.id)),
             guild_id=resolved_guild_id,
@@ -60,9 +87,7 @@ class UserRegistry:
             joined_at=joined_at,
             last_active_at=joined_at,
         )
-
         user.validate_user()
-        await self._users_repo.upsert(int(resolved_guild_id), user)
         return user
 
     async def touch_last_active(
@@ -73,5 +98,9 @@ class UserRegistry:
         updated = replace(user, last_active_at=timestamp)
         updated.guild_id = guild_id
         updated.validate_user()
-        await self._users_repo.upsert(int(guild_id), updated)
+        try:
+            await graphql_client.update_user_last_active(int(guild_id), str(user.user_id))
+        except Exception:
+            # Log at caller; keep in-memory state regardless.
+            pass
         return updated

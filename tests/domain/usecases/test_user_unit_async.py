@@ -4,9 +4,9 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.domain.models.EntityIDModel import UserID
-from app.domain.models.UserModel import User
-from app.domain.usecase.unit.user_unit import update_user_last_active_async
+from nonagon_bot.core.domain.models.EntityIDModel import UserID
+from nonagon_bot.core.domain.models.UserModel import User
+from nonagon_bot.core.domain.usecase.unit.user_unit import update_user_last_active_async
 
 
 class _FakeAsyncUsersRepo:
