@@ -1,45 +1,36 @@
-.PHONY: help install install-backend install-frontend dev api bot frontend test test-core test-api test-bot test-cov lint lint-fix format ci clean
+.PHONY: help install backend frontend dev api bot
 
-POETRY ?= poetry
-BACKEND := backend
-FRONTEND := frontend
-PP := api:bot
-ENV := POETRY_VIRTUALENVS_IN_PROJECT=true
+BACKEND_DIR  ?= backend
+FRONTEND_DIR ?= frontend
 
 help:
-	@echo "Available targets:"
-	@printf "  %-18s %s\n" "install" "Install backend and frontend deps"
-	@printf "  %-18s %s\n" "install-backend" "Install backend dependencies"
-	@printf "  %-18s %s\n" "install-frontend" "Install frontend dependencies"
-	@printf "  %-18s %s\n" "dev" "Run api, bot, and frontend"
-	@printf "  %-18s %s\n" "api" "Run FastAPI with reload"
-	@printf "  %-18s %s\n" "bot" "Run Discord bot"
-	@printf "  %-18s %s\n" "frontend" "Run frontend dev server"
+	@echo "Targets:"
+	@echo "  install    Install backend and frontend deps"
+	@echo "  backend    Install backend deps (poetry)"
+	@echo "  frontend   Install frontend deps (npm)"
+	@echo "  dev        Run api + bot + frontend (parallel)"
+	@echo "  api        Run FastAPI (reload) on :8000"
+	@echo "  bot        Run Discord bot"
+	@echo "  frontend   Run frontend dev server"
 
-install: install-backend install-frontend
+install: backend frontend
 
-install-backend:
-	@if [ ! -d "backend" ]; then \
-		echo "Error: backend directory not found!"; \
-		exit 1; \
-	fi
-	cd $(BACKEND) && $(ENV) $(POETRY) install --no-root
+backend:
+	@test -d "$(BACKEND_DIR)" || (echo "Missing $(BACKEND_DIR)/" && exit 1)
+	cd "$(BACKEND_DIR)" && poetry install
 
-install-frontend:
-	@if [ ! -d "frontend" ]; then \
-		echo "Error: frontend directory not found!"; \
-		exit 1; \
-	fi
-	cd $(FRONTEND) && npm install
+frontend:
+	@test -d "$(FRONTEND_DIR)" || (echo "Missing $(FRONTEND_DIR)/" && exit 1)
+	cd "$(FRONTEND_DIR)" && npm install
 
 dev:
 	$(MAKE) -j3 api bot frontend
 
 api:
-	cd $(BACKEND) && $(ENV) PYTHONPATH=$(PP) $(POETRY) run python -m uvicorn nonagon_api.main:app --reload --host 0.0.0.0 --port 8000
+	cd "$(BACKEND_DIR)" && poetry run uvicorn nonagon_api.main:app --reload --host 0.0.0.0 --port 8000
 
 bot:
-	cd $(BACKEND) && $(ENV) PYTHONPATH=$(PP) $(POETRY) run python -m nonagon_bot.main
+	cd "$(BACKEND_DIR)" && poetry run python -m nonagon_bot.main
 
 frontend:
-	cd $(FRONTEND) && npm run dev
+	cd "$(FRONTEND_DIR)" && npm run dev
