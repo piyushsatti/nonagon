@@ -11,10 +11,12 @@ services:
     ports:
       - "8000:8000"
     env_file: .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://nonagon:nonagon@postgres:5432/nonagon
     volumes:
       - ./logs:/app/logs
     depends_on:
-      mongo:
+      postgres:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
@@ -30,10 +32,12 @@ services:
       dockerfile: backend/bot/Dockerfile
     container_name: nonagon-bot
     env_file: .env
+    environment:
+      - DATABASE_URL=postgresql://nonagon:nonagon@postgres:5432/nonagon
     volumes:
       - ./logs:/app/logs
     depends_on:
-      mongo:
+      postgres:
         condition: service_healthy
     restart: unless-stopped
 
@@ -50,23 +54,28 @@ services:
       - "3000:3000"
     environment:
       - NEXT_PUBLIC_API_URL=http://api:8000
+      - NEXT_PUBLIC_GRAPHQL_URL=http://api:8000/graphql
     depends_on:
       - api
     restart: unless-stopped
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # Database
+  # Database - PostgreSQL (replaces MongoDB)
   # ─────────────────────────────────────────────────────────────────────────────
 
-  mongo:
-    image: mongo:7
-    container_name: nonagon-mongo
+  postgres:
+    image: postgres:16-alpine
+    container_name: nonagon-postgres
+    environment:
+      POSTGRES_USER: nonagon
+      POSTGRES_PASSWORD: nonagon
+      POSTGRES_DB: nonagon
     volumes:
-      - mongo_data:/data/db
+      - postgres_data:/var/lib/postgresql/data
     ports:
-      - "27017:27017"
+      - "5432:5432"
     healthcheck:
-      test: mongosh --eval "db.adminCommand('ping')"
+      test: ["CMD-SHELL", "pg_isready -U nonagon -d nonagon"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -92,5 +101,5 @@ services:
     restart: unless-stopped
 
 volumes:
-  mongo_data:
+  postgres_data:
     driver: local

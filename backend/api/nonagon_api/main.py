@@ -1,17 +1,19 @@
 import logging
+import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 
-from nonagon_api.routers.demo import router as demo_router
-from nonagon_api.routers.quests import router as quests_router
-from nonagon_api.routers.users import router as users_router
+from nonagon_api.graphql.schema import graphql_router
+from nonagon_core.infra.postgres.database import close_db, init_db
 
-log_dir = Path("/app/logs")
+# Use local logs directory in development, /app/logs in Docker
+log_dir = Path(os.getenv("LOG_DIR", "./logs"))
 try:
     log_dir.mkdir(parents=True, exist_ok=True)
-except Exception as exc:  # pragma: no cover - defensive logging
+except OSError as exc:  # pragma: no cover - defensive logging
     logging.warning("Unable to create log directory %s: %s", log_dir, exc)
 else:
     log_path = log_dir / "api.log"
@@ -28,7 +30,30 @@ else:
     ):
         root_logger.addHandler(file_handler)
 
-app = FastAPI(title="Nonagon API", version="1.0.0")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Application lifespan handler for startup/shutdown."""
+    # Startup: initialize database
+    try:
+        await init_db()
+        logging.info("Database initialized successfully")
+    except (OSError, ConnectionError) as e:
+        logging.warning("Database initialization failed: %s. Running without database.", e)
+    yield
+    # Shutdown: close database connections
+    try:
+        await close_db()
+    except (OSError, ConnectionError):
+        pass
+
+
+app = FastAPI(
+    title="Nonagon API",
+    version="2.0.0",
+    description="GraphQL API for Nonagon Discord quest management system",
+    lifespan=lifespan,
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -38,11 +63,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Routers
-app.include_router(users_router)
-app.include_router(quests_router)
-app.include_router(demo_router, prefix="/v1")
-app.include_router(demo_router)
+# GraphQL endpoint (primary API)
+app.include_router(graphql_router, prefix="/graphql")
 
 
 @app.get("/healthz")

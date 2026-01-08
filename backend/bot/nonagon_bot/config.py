@@ -6,9 +6,16 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 
+# PostgreSQL/Supabase database configuration
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    os.getenv("SUPABASE_DB_URL", "postgresql://localhost:5432/nonagon")
+)
 DB_NAME = os.getenv("DB_NAME", "nonagon")
+
+# Legacy MongoDB URI (deprecated, kept for migration period)
+MONGO_URI = os.getenv("MONGO_URI", "")
 
 # Optional: use per-guild adapter for bot flush persistence
 BOT_FLUSH_VIA_ADAPTER = os.getenv("BOT_FLUSH_VIA_ADAPTER", "false").lower() in {
@@ -17,6 +24,10 @@ BOT_FLUSH_VIA_ADAPTER = os.getenv("BOT_FLUSH_VIA_ADAPTER", "false").lower() in {
     "yes",
 }
 
+# GraphQL API endpoint (replaces REST)
+GRAPHQL_API_URL = os.getenv("GRAPHQL_API_URL", "http://localhost:8000/graphql")
+
+# Legacy REST endpoint (deprecated)
 QUEST_API_BASE_URL = os.getenv("QUEST_API_BASE_URL")
 
 board_id_raw = os.getenv("QUEST_BOARD_CHANNEL_ID")
