@@ -1,94 +1,45 @@
-.PHONY: help install dev api bot frontend test lint db-up db-down clean
+.PHONY: help install install-backend install-frontend dev api bot frontend test test-core test-api test-bot test-cov lint lint-fix format ci clean
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# HELP
-# ═══════════════════════════════════════════════════════════════════════════════
+POETRY ?= poetry
+BACKEND := backend
+FRONTEND := frontend
+PP := api:bot
+ENV := POETRY_VIRTUALENVS_IN_PROJECT=true
 
-help: ## Show this help
-	@echo "Nonagon Monorepo - Available Commands"
-	@echo ""
-	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*##"}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
+help:
+	@echo "Available targets:"
+	@printf "  %-18s %s\n" "install" "Install backend and frontend deps"
+	@printf "  %-18s %s\n" "install-backend" "Install backend dependencies"
+	@printf "  %-18s %s\n" "install-frontend" "Install frontend dependencies"
+	@printf "  %-18s %s\n" "dev" "Run api, bot, and frontend"
+	@printf "  %-18s %s\n" "api" "Run FastAPI with reload"
+	@printf "  %-18s %s\n" "bot" "Run Discord bot"
+	@printf "  %-18s %s\n" "frontend" "Run frontend dev server"
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# INSTALLATION
-# ═══════════════════════════════════════════════════════════════════════════════
+install: install-backend install-frontend
 
-install: ## Install all packages in dev mode
-	pip install -e "backend/[dev]"
-	cd frontend && npm install
+install-backend:
+	@if [ ! -d "backend" ]; then \
+		echo "Error: backend directory not found!"; \
+		exit 1; \
+	fi
+	cd $(BACKEND) && $(ENV) $(POETRY) install --no-root
 
-install-backend: ## Install only backend package
-	pip install -e "backend/[dev]"
+install-frontend:
+	@if [ ! -d "frontend" ]; then \
+		echo "Error: frontend directory not found!"; \
+		exit 1; \
+	fi
+	cd $(FRONTEND) && npm install
 
-install-frontend: ## Install only frontend packages
-	cd frontend && npm install
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# DEVELOPMENT
-# ═══════════════════════════════════════════════════════════════════════════════
-
-dev: ## Start all services for local development (parallel)
+dev:
 	$(MAKE) -j3 api bot frontend
 
-api: ## Run API with hot reload
-	uvicorn nonagon_api.main:app --reload --host 0.0.0.0 --port 8000
+api:
+	cd $(BACKEND) && $(ENV) PYTHONPATH=$(PP) $(POETRY) run python -m uvicorn nonagon_api.main:app --reload --host 0.0.0.0 --port 8000
 
-bot: ## Run Discord bot
-	python -m nonagon_bot.main
+bot:
+	cd $(BACKEND) && $(ENV) PYTHONPATH=$(PP) $(POETRY) run python -m nonagon_bot.main
 
-frontend: ## Run frontend dev server
-	cd frontend && npm run dev
-
-# (Removed) JSON Schema code generation targets
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# TESTING
-# ═══════════════════════════════════════════════════════════════════════════════
-
-test: ## Run all tests
-	pytest tests/ -v
-
-test-core: ## Run core/domain tests
-	pytest tests/domain/ tests/infra/ -v
-
-test-api: ## Run API tests
-	pytest tests/api/ -v
-
-test-bot: ## Run bot tests
-	pytest tests/bot/ -v
-
-test-cov: ## Run tests with coverage
-	pytest tests/ --cov=backend --cov-report=html --cov-report=term
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# LINTING
-# ═══════════════════════════════════════════════════════════════════════════════
-
-lint: ## Run all linters
-	ruff check backend/
-	cd frontend && npm run lint 2>/dev/null || true
-
-lint-fix: ## Run linters and fix issues
-	ruff check backend/ --fix
-	cd frontend && npm run lint:fix 2>/dev/null || true
-
-format: ## Format code
-	ruff format backend/
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# CI
-# ═══════════════════════════════════════════════════════════════════════════════
-
-ci: lint test ## Run CI checks (lint + test)
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# CLEANUP
-# ═══════════════════════════════════════════════════════════════════════════════
-
-clean: ## Clean build artifacts
-	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-	find . -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
-	find . -type d -name ".ruff_cache" -exec rm -rf {} + 2>/dev/null || true
-	find . -type d -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || true
-	rm -rf .coverage htmlcov/
-	cd frontend && rm -rf dist .parcel-cache node_modules/.cache 2>/dev/null || true
+frontend:
+	cd $(FRONTEND) && npm run dev
