@@ -11,41 +11,7 @@ Thank you for your interest in contributing to Nonagon! This document provides g
 
 ## Getting Started
 
-### Development Environment Setup
-
-1. **Fork and clone the repository**
-
-   ```bash
-   git clone https://github.com/your-username/nonagon.git
-   cd nonagon
-   ```
-
-2. **Install dependencies**
-
-   ```bash
-   # Backend
-   cd backend
-   uv sync --all-extras
-   source .venv/bin/activate
-   cd ..
-
-   # Frontend
-   cd frontend
-   npm install
-   cd ..
-   ```
-
-3. **Set up environment variables**
-
-   Copy `.env.example` to `.env` and fill in the required values (see README.md).
-
-4. **Start services**
-
-   ```bash
-   make api       # Terminal 1
-   make bot       # Terminal 2
-   make frontend  # Terminal 3
-   ```
+See the [README.md Quick Start](README.md#quick-start) for environment setup, installation, and running services.
 
 ## Code Style
 
@@ -58,21 +24,21 @@ Thank you for your interest in contributing to Nonagon! This document provides g
 
 ```python
 def calculate_xp(base_xp: int, multiplier: float = 1.0) -> int:
-	"""Calculate experience points with optional multiplier.
+ """Calculate experience points with optional multiplier.
 
-	Args:
-		base_xp: The base experience points to award.
-		multiplier: Optional multiplier for bonus XP.
+ Args:
+  base_xp: The base experience points to award.
+  multiplier: Optional multiplier for bonus XP.
 
-	Returns:
-		The calculated experience points.
+ Returns:
+  The calculated experience points.
 
-	Raises:
-		ValueError: If base_xp is negative.
-	"""
-	if base_xp < 0:
-		raise ValueError("base_xp cannot be negative")
-	return int(base_xp * multiplier)
+ Raises:
+  ValueError: If base_xp is negative.
+ """
+ if base_xp < 0:
+  raise ValueError("base_xp cannot be negative")
+ return int(base_xp * multiplier)
 ```
 
 ### TypeScript
@@ -87,16 +53,12 @@ def calculate_xp(base_xp: int, multiplier: float = 1.0) -> int:
 
 ## Testing
 
-### Running Tests
+Run tests with `make test` or target specific areas:
 
 ```bash
-make test                    # All tests
 pytest tests/domain/         # Domain tests
-pytest tests/api/            # API tests
 pytest tests/bot/            # Bot tests
 pytest -k "quest"            # Pattern matching
-pytest -v                    # Verbose output
-pytest --cov                 # With coverage
 ```
 
 ### Writing Tests
@@ -105,36 +67,6 @@ pytest --cov                 # With coverage
 - Use `pytest` fixtures for setup/teardown
 - Mock external dependencies (Discord API, PostgreSQL)
 - Aim for >80% coverage on new code
-
-```python
-import pytest
-from nonagon_core.domain.models.quest_model import Quest
-
-class TestQuestModel:
-	def test_create_quest_with_valid_data(self):
-		quest = Quest(
-			guild_id="123",
-			title="Test Quest",
-			dm_id="456",
-		)
-		assert quest.title == "Test Quest"
-
-	def test_create_quest_validates_title(self):
-		with pytest.raises(ValueError):
-			Quest(guild_id="123", title="", dm_id="456")
-```
-
-### Test Organization
-
-```
-tests/
-├── api/           # API endpoint tests
-├── bot/           # Discord bot tests
-├── domain/        # Domain model & use case tests
-│   ├── models/
-│   └── usecases/
-└── infra/         # Repository & infrastructure tests
-```
 
 ## Pull Request Process
 
@@ -191,39 +123,12 @@ tests/
 
 ## Project Architecture
 
-### Overview
+See [docs/architecture.md](docs/architecture.md) for the full design document covering:
 
-```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   Frontend  │────▶│     API     │────▶│  PostgreSQL │
-│   (React)   │     │  (FastAPI)  │     │             │
-└─────────────┘     └─────────────┘     └──────┬──────┘
-                                               │
-                    ┌─────────────┐             │
-                    │  Discord    │◀────────────┘
-                    │    Bot      │
-                    └─────────────┘
-```
-
-### Package Dependencies
-
-```
-nonagon_core (domain + infra)
-     ▲              ▲
-     │              │
-nonagon_api    nonagon_bot
-```
-
-- `nonagon_core`: Shared domain models, entities, repositories
-- `nonagon_api`: FastAPI service, GraphQL endpoints
-- `nonagon_bot`: Discord bot, cogs, commands
-
-### Key Conventions
-
-1. **Guild Scoping**: All persistent models require `guild_id`
-2. **Entity IDs**: Use `EntityIDModel` subclasses (`UserID`, `QuestID`, etc.)
-3. **Validation**: Call `validate_*` methods before persisting
-4. **Async**: API uses SQLAlchemy async, bot uses psycopg2 for sync flush
+- Hexagonal (Ports & Adapters) structure
+- Runtime components (Cogs, Use Cases, Domain, Adapters)
+- Data model and ID strategy
+- Key workflows (Quest lifecycle, summaries)
 
 ### Adding New Features
 
@@ -231,16 +136,6 @@ nonagon_api    nonagon_bot
 2. **Repository**: Add/modify in `nonagon_core/infra/postgres/`
 3. **API Endpoint**: Add resolver in `nonagon_api/graphql/resolvers.py`
 4. **Bot Command**: Add cog in `nonagon_bot/cogs/`
-5. **API Contracts**: Use the GraphQL schema as the source of truth; no JSON Schema codegen.
-
-## JSON Schema Workflow
-
-JSON Schema files are the source of truth for data contracts:
-
-1. Update GraphQL schema/types/resolvers as needed
-2. Validate: `make validate-schemas`
-3. Generate types: `make generate`
-4. Update any manual Pydantic models if needed
 
 ## Getting Help
 

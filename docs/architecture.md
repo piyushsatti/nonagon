@@ -17,7 +17,7 @@ Nonagon automates quest workflows (announce >> sign‑ups >> roster selection >>
 - **Domain Layer (Models):** Pure Python dataclasses modeling `User` (+ roles & profiles), `Quest`, and `QuestSummary`. Contains invariants and state transitions.
 - **Adapters (Infra):** Repositories for MongoDB, configuration, and integrations (Discord message IDs linkage). Optional background jobs for projections/analytics.
 
-```
+```bash
 [ Discord (slash cmds, buttons) ]
            |
         Controllers (Cogs)  ←→  Views (discord.ui.View + presenters)
@@ -29,7 +29,7 @@ Nonagon automates quest workflows (announce >> sign‑ups >> roster selection >>
         Adapters (MongoDB repos, schedulers, config)
 ```
 
-**Why this shape**
+**Why this shape?**
 
 - Domain rules remain framework‑agnostic.
 - UI/Discord specifics live at the edge and can change without touching core logic.
@@ -45,7 +45,19 @@ Nonagon automates quest workflows (announce >> sign‑ups >> roster selection >>
 - **Views (UI):** `discord.ui.View` classes own component callbacks; presenters build embeds.
 - **Rate limiting:** centralized wrapper handles retries/backoff when editing messages.
 
-#### 3.1.1 Discord Intents
+#### 3.1.1 DM Wizard Patterns
+
+We standardize DM-driven workflows around an interactive preview message with persistent controls:
+
+- **Single preview message.** Wizards open with a DM that includes the latest preview embed and a `discord.ui.View` for navigation.
+- **Button-driven edits.** Each field is managed by a button that opens a modal. Modals validate inputs immediately and re-render the shared preview on success.
+- **Contextual confirmations.** A dedicated "Create"/"Save" button confirms changes, while a paired cancel button exits gracefully.
+- **Consistent feedback.** Errors use the shared `send_ephemeral_message` helper (or the `_flash_message` wrapper in sessions) so responses match the friendly tone across Quest and Character flows.
+- **Shared components.** DM sessions use classes from `app.bot.ui.wizards` (`WizardSessionBase`, `PreviewWizardContext`, `PreviewWizardView`, and shared modal/validation helpers) to keep copy, validation, and lifecycle behavior aligned.
+
+When implementing a new DM wizard, construct it around these shared pieces so both quests and characters present the same interaction model.
+
+#### 3.1.2 Discord Intents
 
 The user telemetry feature set relies on Discord gateway events that are only delivered when the corresponding intents are enabled both in code and on the developer portal. Ensure the following are turned on before deploying analytics collectors:
 
@@ -160,6 +172,15 @@ All four intents must be requested in `discord.Intents` during bot startup. The 
 - **Structured logging** with request/interaction IDs.
 - **Metrics** (per command latency, error rate, rate‑limit hits, sign‑up conversions).
 - **Tracing**: optional OpenTelemetry (spans around use cases and Discord/DB adapters). Export to console in dev; OTLP in prod.
+
+### 8.1 Moderation SOP
+
+#### Quest Nudge Auditing
+
+- Every quest nudge posts a gold "Quest Nudge" embed in the quest channel and includes a link back to the announcement message.
+- The bot records each nudge via `send_demo_log`, emitting a guild-scoped entry with the referee mention and quest title.
+- Moderators should review the demo log stream during weekly check-ins to confirm nudges stay within the 48h cooldown cadence.
+- If a nudge occurs too soon, remind the referee that cooldown enforcement is automatic and note the attempt for follow-up.
 
 ---
 

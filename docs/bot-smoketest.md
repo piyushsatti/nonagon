@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - Bot is invited to your test server with scopes `bot applications.commands` and permissions: Send Messages, Read Message History, Use Slash Commands.
-- PostgreSQL reachable per `.env`: set `DATABASE_URL` and `DB_NAME`.
+- PostgreSQL reachable per `.env`: set `DATABASE_URL`.
 - `BOT_TOKEN` is set in `.env` and not a placeholder.
 
 ## Run the Bot (local)

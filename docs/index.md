@@ -9,14 +9,16 @@ A lightweight system that helps players sign up for quests, referees run session
 
 ## Quick Start
 
-| Section | Description |
-|--------|-------------|
-| [Getting Started](../README.md) | Install, configure, and run the bot locally |
-| [Architecture](architecture.md) | Layered structure, design choices, and intents |
-| [PRD & Use Cases](PRD.md) | In-depth breakdown of features and user stories |
-| [Discord Commands](discord.md) | Slash commands: inputs, permissions, outputs |
-| [API Reference](API.md) | REST endpoints and schemas |
-| [Moderation SOP](moderation.md) | Logging expectations and review checklist |
+| Section                            | Description                                     |
+| ---------------------------------- | ----------------------------------------------- |
+| [Getting Started](../README.md)    | Install, configure, and run the bot locally     |
+| [Architecture](architecture.md)    | Layered structure, design choices, and intents  |
+| [PRD & Use Cases](PRD.md)          | In-depth breakdown of features and user stories |
+| [Discord Commands](discord.md)     | Slash commands: inputs, permissions, outputs    |
+| [API Reference](api.md)            | REST endpoints and schemas                      |
+| [Bot Smoke Test](bot-smoketest.md) | Local testing guide and troubleshooting         |
+
+> **Note:** Moderation SOP is now in [architecture.md §8.1](architecture.md#81-moderation-sop). DM Wizard patterns are in [architecture.md §3.1.1](architecture.md#311-dm-wizard-patterns).
 
 ---
 
