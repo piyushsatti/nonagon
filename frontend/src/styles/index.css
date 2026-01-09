@@ -1,22 +1,230 @@
+@import url("https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Cinzel+Decorative:wght@700&family=Cormorant+Garamond:wght@400;500;600;700&family=Source+Serif+4:wght@400;500;600&family=Inter:wght@400;600&display=swap");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  --foreground-rgb: 0, 0, 0;
-  --background-rgb: 255, 255, 255;
+  --board-bg: #3d291d;
+  --board-ink: #f0e6cf;
+  --ink-rgb: 240, 230, 207;
+  --surface-ink: #f2e6cf;
+  --paper-ink: #21150f;
+  --note-bg: #f4e4c7;
+  --note-border: rgba(43, 38, 32, 0.42);
+  --accent: #b50c0f;
+  --accent-2: #c9a24a;
+  --vignette: 0.52;
+  --noise: 0.08;
+  --pointer-x: 50%;
+  --pointer-y: 40%;
+  --pointer-visible: 0.35;
+  color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --foreground-rgb: 255, 255, 255;
-    --background-rgb: 10, 10, 10;
-  }
+html[data-theme="dark"] {
+  --board-bg: #1a0f0b;
+  --board-ink: #f3e7cf;
+  --ink-rgb: 243, 231, 207;
+  --surface-ink: #efe2cd;
+  --paper-ink: #f8edda;
+  --note-bg: #3f3226;
+  --note-border: rgba(243, 231, 207, 0.35);
+  --accent: #b50c0f;
+  --accent-2: #c9a24a;
+  --vignette: 0.8;
+  --noise: 0.12;
+  --pointer-visible: 0.45;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
 }
 
 body {
-  color: rgb(var(--foreground-rgb));
-  background: rgb(var(--background-rgb));
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+  background-color: var(--board-bg);
+  color: var(--board-ink);
+  font-family: "Cormorant Garamond", "Source Serif 4", "Inter", serif;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(circle at var(--pointer-x) var(--pointer-y), rgba(255, 249, 230, 0.36), rgba(0, 0, 0, 0.7) 52%, rgba(0, 0, 0, 0.82) 74%),
+    url("../assets/map-texture.jpg");
+  background-size: cover;
+  background-position: center;
+  mix-blend-mode: soft-light;
+  opacity: calc(0.12 + 0.3 * var(--pointer-visible));
+  pointer-events: none;
+  transition: opacity 300ms ease;
+  z-index: 0;
+}
+
+a {
+  color: inherit;
+}
+
+::selection {
+  background: rgba(201, 162, 74, 0.25);
+  color: var(--board-ink);
+}
+
+.board-surface {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  z-index: 0;
+}
+
+.board-surface > * {
+  position: relative;
+  z-index: 1;
+}
+
+.board-surface::before {
+  content: "";
+  position: absolute;
+  inset: -10%;
+  background: radial-gradient(
+      circle at 50% 30%,
+      rgba(255, 255, 255, 0.04),
+      rgba(0, 0, 0, 0) 45%
+    ),
+    radial-gradient(
+      circle at 50% 120%,
+      rgba(0, 0, 0, var(--vignette)),
+      rgba(0, 0, 0, 0) 35%
+    );
+  opacity: 0.7;
+  mix-blend-mode: multiply;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.board-surface::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 160 160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.35'/%3E%3C/svg%3E");
+  opacity: var(--noise);
+  mix-blend-mode: soft-light;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.parchment-card {
+  position: relative;
+  background: var(--note-bg);
+  border: 1px solid var(--note-border);
+  color: var(--paper-ink);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  transition: transform 200ms ease, box-shadow 200ms ease, border-color 200ms ease,
+    background-color 200ms ease, color 200ms ease;
+}
+
+.parchment-card::before {
+  content: "";
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: radial-gradient(circle at 30% 30%, #f7efe0 30%, var(--accent-2));
+  border: 1px solid var(--note-border);
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.35);
+  transform: translateX(-50%);
+  opacity: 0.9;
+}
+
+.parchment-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0)),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0));
+  mix-blend-mode: multiply;
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+.parchment-card:hover {
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+
+.bg-white,
+.bg-gray-50,
+.bg-gray-100 {
+  background-color: var(--note-bg);
+}
+
+.border-gray-200,
+.border-gray-100,
+.divide-gray-200 {
+  border-color: var(--note-border);
+}
+
+.text-gray-900,
+.text-gray-800 {
+  color: var(--board-ink);
+}
+
+.text-gray-700 {
+  color: rgba(var(--ink-rgb), 0.85);
+}
+
+.text-gray-600 {
+  color: rgba(var(--ink-rgb), 0.75);
+}
+
+.text-gray-500 {
+  color: rgba(var(--ink-rgb), 0.65);
+}
+
+.text-gray-400 {
+  color: rgba(var(--ink-rgb), 0.55);
+}
+
+.bg-indigo-600,
+.bg-blue-600 {
+  background-color: var(--accent);
+}
+
+.bg-indigo-700,
+.bg-blue-700 {
+  background-color: #8b090b;
+}
+
+.text-indigo-600,
+.text-indigo-700,
+.text-blue-600,
+.text-blue-700 {
+  color: var(--accent);
+}
+
+.bg-indigo-50,
+.bg-indigo-100,
+.bg-blue-50 {
+  background-color: rgba(var(--ink-rgb), 0.08);
+}
+
+.hover\:bg-indigo-700:hover {
+  background-color: #8b090b;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .parchment-card,
+  .board-surface {
+    animation: none !important;
+  }
+  body::before {
+    transition: none;
+  }
 }

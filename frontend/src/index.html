@@ -4,6 +4,69 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Nonagon - Quest Management</title>
+  <script>
+    (() => {
+      const storageKey = "theme";
+      const stored = localStorage.getItem(storageKey);
+      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      const initial = stored === "dark" || stored === "light" ? stored : prefersDark ? "dark" : "light";
+
+      const applyTheme = (next) => {
+        document.documentElement.dataset.theme = next;
+        if (next === "light" || next === "dark") {
+          localStorage.setItem(storageKey, next);
+        } else {
+          localStorage.removeItem(storageKey);
+        }
+      };
+
+      applyTheme(initial);
+
+      window.__toggleTheme = () => {
+        const current = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+        const next = current === "dark" ? "light" : "dark";
+        applyTheme(next);
+        return next;
+      };
+
+      window
+        .matchMedia("(prefers-color-scheme: dark)")
+        .addEventListener("change", (event) => {
+          const saved = localStorage.getItem(storageKey);
+          if (!saved) {
+            applyTheme(event.matches ? "dark" : "light");
+          }
+        });
+
+      window.addEventListener("keydown", (event) => {
+        if ((event.metaKey || event.ctrlKey) && event.key && event.key.toLowerCase() === "t") {
+          event.preventDefault();
+          window.__toggleTheme();
+        }
+      });
+
+      const root = document.documentElement;
+      const setPointer = (x, y, visible) => {
+        root.style.setProperty("--pointer-x", `${x}px`);
+        root.style.setProperty("--pointer-y", `${y}px`);
+        if (typeof visible === "number") {
+          root.style.setProperty("--pointer-visible", visible.toString());
+        }
+      };
+
+      window.addEventListener("pointermove", (event) => {
+        setPointer(event.clientX, event.clientY, 0.9);
+      });
+
+      window.addEventListener("pointerenter", (event) => {
+        setPointer(event.clientX, event.clientY, 0.9);
+      });
+
+      window.addEventListener("pointerleave", () => {
+        root.style.setProperty("--pointer-visible", "0.2");
+      });
+    })();
+  </script>
   <link rel="stylesheet" href="./styles/index.css">
 </head>
 <body>
