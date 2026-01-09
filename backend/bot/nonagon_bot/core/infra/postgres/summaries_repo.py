@@ -133,3 +133,15 @@ class SummariesRepoPostgres:
                 result = await session.execute(stmt)
                 if result.scalar_one_or_none() is None:
                     return str(candidate)
+
+    async def list_by_guild(self, guild_id: int) -> list[QuestSummary]:
+        """List all summaries for a guild."""
+        async with get_session() as session:
+            stmt = select(SummaryModel).where(
+                SummaryModel.guild_id == int(guild_id)
+            )
+            
+            result = await session.execute(stmt)
+            models = result.scalars().all()
+            
+            return [summary_from_orm(m) for m in models]

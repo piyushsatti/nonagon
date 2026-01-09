@@ -147,3 +147,15 @@ class CharactersRepoPostgres:
             models = result.scalars().all()
             
             return [character_from_orm(m) for m in models]
+
+    async def list_by_guild(self, guild_id: int) -> List[Character]:
+        """List all characters for a guild (all statuses)."""
+        async with get_session() as session:
+            stmt = select(CharacterModel).where(
+                CharacterModel.guild_id == int(guild_id)
+            )
+            
+            result = await session.execute(stmt)
+            models = result.scalars().all()
+            
+            return [character_from_orm(m) for m in models]

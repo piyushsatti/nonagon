@@ -33,6 +33,7 @@ from nonagon_api.graphql.converters import (
     domain_user_to_gql,
 )
 from nonagon_api.graphql.types import (
+    ActivityStats,
     AddSignupInput,
     Character,
     CreateCharacterInput,
@@ -43,6 +44,7 @@ from nonagon_api.graphql.types import (
     LookupEntry,
     Quest,
     Summary,
+    TopContributor,
     UpdateCharacterInput,
     UpdateLookupInput,
     UpdateQuestInput,
@@ -178,6 +180,58 @@ class Query:
         for q in quests:
             q.guild_id = guild_id
         return [domain_quest_to_gql(q) for q in quests]
+
+    @strawberry.field
+    async def characters_by_guild(self, guild_id: int) -> List[Character]:
+        """List all characters for a guild."""
+        chars = await characters_repo.list_by_guild(guild_id)
+        return [domain_character_to_gql(c) for c in chars]
+
+    @strawberry.field
+    async def summaries_by_guild(self, guild_id: int) -> List[Summary]:
+        """List all summaries for a guild."""
+        summaries = await summaries_repo.list_by_guild(guild_id)
+        return [domain_summary_to_gql(s) for s in summaries]
+
+    @strawberry.field
+    async def activity_stats(self, guild_id: int) -> ActivityStats:
+        """Get aggregated activity statistics for a guild."""
+        # Fetch all data for the guild
+        users = await users_repo.list_by_guild(guild_id)
+        quests = await quests_repo.list_recent(guild_id, limit=1000)
+        characters = await characters_repo.list_by_guild(guild_id)
+        summaries = await summaries_repo.list_by_guild(guild_id)
+
+        # Aggregate totals
+        total_messages = sum(u.messages_count_total or 0 for u in users)
+        total_reactions = sum((u.reactions_given or 0) + (u.reactions_received or 0) for u in users)
+        total_voice_hours = sum(u.voice_total_time_spent or 0 for u in users)
+        active_users = len([u for u in users if (u.messages_count_total or 0) > 0])
+
+        # Get top contributors (sorted by messages)
+        sorted_users = sorted(users, key=lambda u: u.messages_count_total or 0, reverse=True)[:5]
+        top_contributors = [
+            TopContributor(
+                user_id=str(u.user_id),
+                discord_id=u.discord_id,
+                username=None,  # Could be fetched from Discord if needed
+                messages=u.messages_count_total or 0,
+                reactions=(u.reactions_given or 0) + (u.reactions_received or 0),
+                voice_hours=u.voice_total_time_spent or 0,
+            )
+            for u in sorted_users
+        ]
+
+        return ActivityStats(
+            total_messages=total_messages,
+            total_reactions=total_reactions,
+            total_voice_hours=total_voice_hours,
+            active_users=active_users,
+            total_quests=len(quests),
+            total_characters=len(characters),
+            total_summaries=len(summaries),
+            top_contributors=top_contributors,
+        )
 
 
 # =============================================================================

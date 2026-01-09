@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 
 from nonagon_api.graphql.schema import graphql_router
+from nonagon_api.auth import auth_router
 from nonagon_bot.core.infra.postgres.database import close_db, init_db
 
 # Use local logs directory in development, /app/logs in Docker
@@ -65,6 +66,9 @@ app.add_middleware(
 
 # GraphQL endpoint (primary API)
 app.include_router(graphql_router, prefix="/graphql")
+
+# Authentication endpoints
+app.include_router(auth_router)
 
 
 @app.get("/healthz")

@@ -364,3 +364,31 @@ class LeaderboardResponse:
     """Response for leaderboard queries."""
     metric: LeaderboardMetric
     entries: List[LeaderboardEntry]
+
+
+# =============================================================================
+# Activity Stats Types
+# =============================================================================
+
+@strawberry.type
+class TopContributor:
+    """A top contributor in the guild."""
+    user_id: str
+    discord_id: Optional[str]
+    username: Optional[str]
+    messages: int
+    reactions: int
+    voice_hours: float
+
+
+@strawberry.type
+class ActivityStats:
+    """Aggregated activity statistics for a guild."""
+    total_messages: int
+    total_reactions: int
+    total_voice_hours: float
+    active_users: int
+    total_quests: int
+    total_characters: int
+    total_summaries: int
+    top_contributors: List[TopContributor]
